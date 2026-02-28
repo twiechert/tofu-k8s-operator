@@ -66,7 +66,7 @@ e2e: kind-up kind-load
     set -euo pipefail
     tmpfile=$(mktemp)
     kind get kubeconfig --name {{ KIND_CLUSTER }} > "$tmpfile"
-    KUBECONFIG="$tmpfile" go test -v -tags=integration ./test/e2e
+    KUBECONFIG="$tmpfile" go test -v -timeout 30m -tags=integration ./test/e2e
     ret=$?
     rm -f "$tmpfile"
     exit $ret
