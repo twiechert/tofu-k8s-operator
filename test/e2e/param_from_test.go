@@ -363,3 +363,81 @@ spec:
 	}
 }
 
+func TestParamFromSecretWatch(t *testing.T) {
+	deployOperator(t)
+	dynClient := newDynamicClient(t)
+	clientset := newClientset(t)
+
+	applyYAML(t, paramFromProgramYAML)
+	defer deleteYAML(t, paramFromProgramYAML)
+
+	secretYAML := `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: watch-secret
+  namespace: default
+stringData:
+  seed: "initial-secret-value"
+`
+	applyYAML(t, secretYAML)
+	defer deleteYAML(t, secretYAML)
+
+	project := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: watch-secret-test
+  namespace: default
+spec:
+  programRef:
+    name: param-test-prog
+  paramFrom:
+    - secretRef:
+        name: watch-secret
+  backend:
+    secretSuffix: watch-secret-test
+    namespace: default
+  autoApprove: true
+`
+	applyYAML(t, project)
+	defer deleteYAML(t, project)
+
+	// Wait for initial apply to succeed
+	waitForPhase(t, dynClient, "default", "watch-secret-test", "Succeeded", 120*time.Second)
+
+	// Record the lastAppliedHash before update
+	obj, err := dynClient.Resource(tofuProjectGVR).Namespace("default").Get(context.Background(), "watch-secret-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get project: %v", err)
+	}
+	status, _, _ := unstructured.NestedMap(obj.Object, "status")
+	oldHash, _ := status["lastAppliedHash"].(string)
+	if oldHash == "" {
+		t.Fatal("expected lastAppliedHash to be set")
+	}
+
+	// Update Secret — this should trigger re-reconciliation
+	patch := []byte(`{"stringData":{"seed":"updated-secret-value"}}`)
+	_, err = clientset.CoreV1().Secrets("default").Patch(
+		context.Background(), "watch-secret", types.MergePatchType, patch, metav1.PatchOptions{},
+	)
+	if err != nil {
+		t.Fatalf("failed to update Secret: %v", err)
+	}
+
+	// Wait for Succeeded again with a different hash
+	time.Sleep(5 * time.Second)
+	waitForPhase(t, dynClient, "default", "watch-secret-test", "Succeeded", 120*time.Second)
+
+	obj, err = dynClient.Resource(tofuProjectGVR).Namespace("default").Get(context.Background(), "watch-secret-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get project after update: %v", err)
+	}
+	status, _, _ = unstructured.NestedMap(obj.Object, "status")
+	newHash, _ := status["lastAppliedHash"].(string)
+	if newHash == oldHash {
+		t.Fatalf("expected hash to change after Secret update, still %s", oldHash)
+	}
+}
+
