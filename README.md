@@ -11,8 +11,8 @@
 - Declarative OpenTofu execution via CRDs
 - Kubernetes backend for state (Secrets)
 - Reusable programs (`TofuProgram`) — inline HCL or [git sources](doc/git-sources.md)
-- Parameterized runs (`TofuProject`)
-- Drift-safe: new Job created when inputs change
+- Parameterized runs (`TofuProject`) — inline, `paramFrom` (bulk ConfigMap/Secret), and `paramBindings` (individual key refs)
+- Drift-safe: new Job created when inputs change (including ConfigMap/Secret watches)
 - [Cross-project output dependencies](doc/dependencies.md)
 - [Provider plugin cache](doc/provider-cache.md) via PVC
 - [Plan-then-approve](doc/plan-approve.md) workflow
@@ -95,6 +95,7 @@ spec:
 |-------|-------------|
 | [Git Sources](doc/git-sources.md) | Using git repositories instead of inline HCL, private repo auth |
 | [Plan-Then-Approve](doc/plan-approve.md) | Review `tofu plan` output before applying |
+| [External Params](doc/external-params.md) | Import params from ConfigMaps/Secrets via `paramFrom` and `paramBindings` |
 | [Cross-Project Dependencies](doc/dependencies.md) | Consume outputs from upstream projects as input params |
 | [Provider Plugin Cache](doc/provider-cache.md) | Cache providers via PVC to speed up `tofu init` |
 | [Delete Protection](doc/delete-protection.md) | Prevent accidental infrastructure destruction |

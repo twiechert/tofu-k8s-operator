@@ -51,6 +51,8 @@ func (r *TofuProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&batchv1.Job{}).
 		Owns(&corev1.ConfigMap{}).
 		Watches(&tofuv1alpha1.TofuProject{}, handler.EnqueueRequestsFromMapFunc(r.findDependentProjects)).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.findProjectsReferencingConfigMap)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.findProjectsReferencingSecret)).
 		Complete(r)
 }
 
@@ -1268,13 +1270,30 @@ func (r *TofuProjectReconciler) captureOutputs(ctx context.Context, job *batchv1
 //   - depHashStr: deterministic hash string of resolved dependency values
 //   - result/err: if effectiveParams is nil, return this result to the caller
 func (r *TofuProjectReconciler) resolveDependencies(ctx context.Context, project *tofuv1alpha1.TofuProject) (map[string]string, string, ctrl.Result, error) {
+	// Resolve external params (paramFrom + paramBindings) first
+	externalParams, externalHashStr, err := r.resolveExternalParams(ctx, project)
+	if err != nil {
+		project.Status.Phase = "Error"
+		project.Status.Message = fmt.Sprintf("Failed to resolve external params: %v", err)
+		r.updateStatusWithCondition(ctx, project)
+		return nil, "", ctrl.Result{}, err
+	}
+
+	// Build effectiveParams with precedence:
+	// 1. paramFrom values (lowest)
+	// 2. paramBindings values (override paramFrom) — already merged in externalParams
+	// 3. params inline values (override both)
+	// 4. dependency outputs (highest — applied below)
 	effectiveParams := map[string]string{}
+	for k, v := range externalParams {
+		effectiveParams[k] = v
+	}
 	for k, v := range project.Spec.Params {
 		effectiveParams[k] = v
 	}
 
 	if len(project.Spec.Dependencies) == 0 {
-		return effectiveParams, "", ctrl.Result{}, nil
+		return effectiveParams, externalHashStr, ctrl.Result{}, nil
 	}
 
 	log := ctrl.LoggerFrom(ctx)
@@ -1322,11 +1341,195 @@ func (r *TofuProjectReconciler) resolveDependencies(ctx context.Context, project
 		}
 	}
 
-	// Build deterministic hash string
+	// Build deterministic hash string combining external and dependency hashes
 	sort.Strings(depParts)
 	depHashStr := strings.Join(depParts, ",")
+	combinedHash := depHashStr
+	if externalHashStr != "" && combinedHash != "" {
+		combinedHash = externalHashStr + "|" + combinedHash
+	} else if externalHashStr != "" {
+		combinedHash = externalHashStr
+	}
 
-	return effectiveParams, depHashStr, ctrl.Result{}, nil
+	return effectiveParams, combinedHash, ctrl.Result{}, nil
+}
+
+// resolveExternalParams fetches ConfigMap/Secret data referenced by paramFrom and paramBindings.
+// Returns (resolved params map, deterministic hash string, error).
+func (r *TofuProjectReconciler) resolveExternalParams(ctx context.Context, project *tofuv1alpha1.TofuProject) (map[string]string, string, error) {
+	resolved := map[string]string{}
+
+	// 1. paramFrom: bulk-read all keys from each ConfigMap/Secret (lowest precedence)
+	for _, pf := range project.Spec.ParamFrom {
+		if pf.ConfigMapRef != nil {
+			ns := pf.ConfigMapRef.Namespace
+			if ns == "" {
+				ns = project.Namespace
+			}
+			var cm corev1.ConfigMap
+			if err := r.Get(ctx, types.NamespacedName{Name: pf.ConfigMapRef.Name, Namespace: ns}, &cm); err != nil {
+				return nil, "", fmt.Errorf("paramFrom configMapRef %s/%s: %w", ns, pf.ConfigMapRef.Name, err)
+			}
+			for k, v := range cm.Data {
+				resolved[k] = v
+			}
+		}
+		if pf.SecretRef != nil {
+			ns := pf.SecretRef.Namespace
+			if ns == "" {
+				ns = project.Namespace
+			}
+			var secret corev1.Secret
+			if err := r.Get(ctx, types.NamespacedName{Name: pf.SecretRef.Name, Namespace: ns}, &secret); err != nil {
+				return nil, "", fmt.Errorf("paramFrom secretRef %s/%s: %w", ns, pf.SecretRef.Name, err)
+			}
+			for k, v := range secret.Data {
+				resolved[k] = string(v)
+			}
+		}
+	}
+
+	// 2. paramBindings: individual key refs (override paramFrom values)
+	for _, pb := range project.Spec.ParamBindings {
+		if pb.ConfigMapKeyRef != nil {
+			ns := project.Namespace
+			var cm corev1.ConfigMap
+			if err := r.Get(ctx, types.NamespacedName{Name: pb.ConfigMapKeyRef.Name, Namespace: ns}, &cm); err != nil {
+				return nil, "", fmt.Errorf("paramBindings configMapKeyRef %s/%s: %w", ns, pb.ConfigMapKeyRef.Name, err)
+			}
+			val, ok := cm.Data[pb.ConfigMapKeyRef.Key]
+			if !ok {
+				return nil, "", fmt.Errorf("paramBindings configMapKeyRef %s/%s: key %q not found", ns, pb.ConfigMapKeyRef.Name, pb.ConfigMapKeyRef.Key)
+			}
+			resolved[pb.Name] = val
+		}
+		if pb.SecretKeyRef != nil {
+			ns := project.Namespace
+			var secret corev1.Secret
+			if err := r.Get(ctx, types.NamespacedName{Name: pb.SecretKeyRef.Name, Namespace: ns}, &secret); err != nil {
+				return nil, "", fmt.Errorf("paramBindings secretKeyRef %s/%s: %w", ns, pb.SecretKeyRef.Name, err)
+			}
+			val, ok := secret.Data[pb.SecretKeyRef.Key]
+			if !ok {
+				return nil, "", fmt.Errorf("paramBindings secretKeyRef %s/%s: key %q not found", ns, pb.SecretKeyRef.Name, pb.SecretKeyRef.Key)
+			}
+			resolved[pb.Name] = string(val)
+		}
+	}
+
+	if len(resolved) == 0 {
+		return resolved, "", nil
+	}
+
+	// Build deterministic hash string of all resolved values (sorted)
+	var parts []string
+	for k, v := range resolved {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+	}
+	sort.Strings(parts)
+	hashStr := "ext:" + strings.Join(parts, ",")
+
+	return resolved, hashStr, nil
+}
+
+// findProjectsReferencingConfigMap returns reconcile requests for all TofuProjects
+// that reference the changed ConfigMap via paramFrom or paramBindings.
+func (r *TofuProjectReconciler) findProjectsReferencingConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
+	cm, ok := obj.(*corev1.ConfigMap)
+	if !ok {
+		return nil
+	}
+
+	var allProjects tofuv1alpha1.TofuProjectList
+	if err := r.List(ctx, &allProjects); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for i := range allProjects.Items {
+		p := &allProjects.Items[i]
+		if projectReferencesConfigMap(p, cm.Name, cm.Namespace) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      p.Name,
+					Namespace: p.Namespace,
+				},
+			})
+		}
+	}
+	return requests
+}
+
+// findProjectsReferencingSecret returns reconcile requests for all TofuProjects
+// that reference the changed Secret via paramFrom or paramBindings.
+func (r *TofuProjectReconciler) findProjectsReferencingSecret(ctx context.Context, obj client.Object) []reconcile.Request {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	var allProjects tofuv1alpha1.TofuProjectList
+	if err := r.List(ctx, &allProjects); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for i := range allProjects.Items {
+		p := &allProjects.Items[i]
+		if projectReferencesSecret(p, secret.Name, secret.Namespace) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      p.Name,
+					Namespace: p.Namespace,
+				},
+			})
+		}
+	}
+	return requests
+}
+
+// projectReferencesConfigMap returns true if the project references the given ConfigMap
+// via paramFrom or paramBindings.
+func projectReferencesConfigMap(project *tofuv1alpha1.TofuProject, name, namespace string) bool {
+	for _, pf := range project.Spec.ParamFrom {
+		if pf.ConfigMapRef != nil {
+			ns := pf.ConfigMapRef.Namespace
+			if ns == "" {
+				ns = project.Namespace
+			}
+			if pf.ConfigMapRef.Name == name && ns == namespace {
+				return true
+			}
+		}
+	}
+	for _, pb := range project.Spec.ParamBindings {
+		if pb.ConfigMapKeyRef != nil && pb.ConfigMapKeyRef.Name == name && project.Namespace == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+// projectReferencesSecret returns true if the project references the given Secret
+// via paramFrom or paramBindings.
+func projectReferencesSecret(project *tofuv1alpha1.TofuProject, name, namespace string) bool {
+	for _, pf := range project.Spec.ParamFrom {
+		if pf.SecretRef != nil {
+			ns := pf.SecretRef.Namespace
+			if ns == "" {
+				ns = project.Namespace
+			}
+			if pf.SecretRef.Name == name && ns == namespace {
+				return true
+			}
+		}
+	}
+	for _, pb := range project.Spec.ParamBindings {
+		if pb.SecretKeyRef != nil && pb.SecretKeyRef.Name == name && project.Namespace == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 // cacheMode returns the effective cache mode for a project ("shared", "dedicated", or "").

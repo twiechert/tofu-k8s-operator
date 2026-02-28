@@ -22,6 +22,22 @@ type ProjectDependency struct {
 	Outputs    map[string]string `json:"outputs"` // upstream output name → downstream param name
 }
 
+type ParamFromSource struct {
+	ConfigMapRef *ObjectRef `json:"configMapRef,omitempty"`
+	SecretRef    *ObjectRef `json:"secretRef,omitempty"`
+}
+
+type ParamBinding struct {
+	Name            string  `json:"name"`
+	ConfigMapKeyRef *KeyRef `json:"configMapKeyRef,omitempty"`
+	SecretKeyRef    *KeyRef `json:"secretKeyRef,omitempty"`
+}
+
+type KeyRef struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
+}
+
 type CacheSpec struct {
 	// mode: "shared" (namespace PVC, jobs serialized) or "dedicated" (per-project PVC)
 	Mode         string `json:"mode,omitempty"`
@@ -41,6 +57,12 @@ type TofuProjectSpec struct {
 
 	// params are arbitrary key/value variables passed to the program as terraform.tfvars.json
 	Params map[string]string `json:"params,omitempty"`
+
+	// paramFrom bulk-imports all keys from ConfigMaps/Secrets as params (lowest precedence)
+	ParamFrom []ParamFromSource `json:"paramFrom,omitempty"`
+
+	// paramBindings maps individual ConfigMap/Secret keys to named params (medium precedence)
+	ParamBindings []ParamBinding `json:"paramBindings,omitempty"`
 
 	// workspace name (optional)
 	Workspace string `json:"workspace,omitempty"`
@@ -133,6 +155,34 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 		out.Spec.Params = map[string]string{}
 		for k, v := range in.Spec.Params {
 			out.Spec.Params[k] = v
+		}
+	}
+	if in.Spec.ParamFrom != nil {
+		out.Spec.ParamFrom = make([]ParamFromSource, len(in.Spec.ParamFrom))
+		for i, pf := range in.Spec.ParamFrom {
+			out.Spec.ParamFrom[i] = ParamFromSource{}
+			if pf.ConfigMapRef != nil {
+				ref := *pf.ConfigMapRef
+				out.Spec.ParamFrom[i].ConfigMapRef = &ref
+			}
+			if pf.SecretRef != nil {
+				ref := *pf.SecretRef
+				out.Spec.ParamFrom[i].SecretRef = &ref
+			}
+		}
+	}
+	if in.Spec.ParamBindings != nil {
+		out.Spec.ParamBindings = make([]ParamBinding, len(in.Spec.ParamBindings))
+		for i, pb := range in.Spec.ParamBindings {
+			out.Spec.ParamBindings[i] = ParamBinding{Name: pb.Name}
+			if pb.ConfigMapKeyRef != nil {
+				ref := *pb.ConfigMapKeyRef
+				out.Spec.ParamBindings[i].ConfigMapKeyRef = &ref
+			}
+			if pb.SecretKeyRef != nil {
+				ref := *pb.SecretKeyRef
+				out.Spec.ParamBindings[i].SecretKeyRef = &ref
+			}
 		}
 	}
 	if in.Spec.Dependencies != nil {

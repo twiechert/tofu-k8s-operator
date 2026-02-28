@@ -86,6 +86,44 @@ spec:
                   type: object
                   additionalProperties:
                     type: string
+                paramFrom:
+                  type: array
+                  description: "Bulk import all keys from ConfigMaps/Secrets as params (lowest precedence)"
+                  items:
+                    type: object
+                    properties:
+                      configMapRef:
+                        type: object
+                        required: ["name"]
+                        properties:
+                          name: {type: string}
+                          namespace: {type: string}
+                      secretRef:
+                        type: object
+                        required: ["name"]
+                        properties:
+                          name: {type: string}
+                          namespace: {type: string}
+                paramBindings:
+                  type: array
+                  description: "Map individual ConfigMap/Secret keys to named params (medium precedence)"
+                  items:
+                    type: object
+                    required: ["name"]
+                    properties:
+                      name: {type: string}
+                      configMapKeyRef:
+                        type: object
+                        required: ["name", "key"]
+                        properties:
+                          name: {type: string}
+                          key: {type: string}
+                      secretKeyRef:
+                        type: object
+                        required: ["name", "key"]
+                        properties:
+                          name: {type: string}
+                          key: {type: string}
                 workspace: {type: string}
                 image: {type: string}
                 autoApprove: {type: boolean}
