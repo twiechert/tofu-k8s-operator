@@ -1,11 +1,10 @@
 <p align="center">
   <img src="logo.png" alt="tofu-k8s-operator" width="200"/>
+  <br/>
+  <strong>OpenTofu Kubernetes Operator</strong>
+  <br/>
+  <em>A Kubernetes operator written in Go that lets you run OpenTofu declaratively using Custom Resources.</em>
 </p>
-
-# OpenTofu Kubernetes Operator
-
-A Kubernetes operator written in Go that lets you run **OpenTofu** declaratively
-using Custom Resources.
 
 ## Features
 
@@ -61,18 +60,6 @@ just e2e
 just build          # compile the binary
 just docker-build   # build the container image
 ```
-
-## Build & Push (GitHub Actions)
-
-This repository ships with a GitHub Actions workflow that:
-- runs tests
-- builds the controller binary
-- builds a container image
-- pushes it to GHCR
-
-Required secrets:
-- `GHCR_TOKEN` (or use `GITHUB_TOKEN` with packages:write)
-
 
 ## Git Repository Source
 

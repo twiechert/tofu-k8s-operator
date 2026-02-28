@@ -14,7 +14,7 @@ vendor/
 Thumbs.db
 
 # Go modules
-/go.sum
+# /go.sum — tracked; needed by CI
 
 # Logs
 *.log
