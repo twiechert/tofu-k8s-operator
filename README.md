@@ -23,18 +23,6 @@
 - Leader election for HA deployments
 - Job locking — one Job per project at a time
 
-## CRDs
-
-### TofuProgram
-- Inline OpenTofu HCL or git repository source
-- Required providers with version constraints
-
-### TofuProject
-- Reference to a TofuProgram
-- Arbitrary parameters → `terraform.tfvars.json`
-- Backend configuration (Kubernetes Secrets)
-- Execution settings (autoApprove, suspend, syncInterval, cache, dependencies)
-
 ## Quick Start
 
 ### Deploy
@@ -50,6 +38,12 @@ Raw manifests:
 ```bash
 kubectl apply -k deploy/
 ```
+
+### CRDs
+
+**TofuProgram** defines the infrastructure code — either inline HCL or a git repository source, plus provider requirements.
+
+**TofuProject** binds a program to a specific environment — parameters, backend config, and execution settings (autoApprove, suspend, syncInterval, cache, dependencies).
 
 ### Usage
 
@@ -77,16 +71,6 @@ spec:
   autoApprove: true
 ```
 
-## Build & Test
-
-```bash
-just build          # compile the binary
-just docker-build   # build the container image
-just test           # run unit tests
-just test-cover     # run with coverage
-just e2e            # end-to-end tests (requires Docker)
-```
-
 ## Documentation
 
 | Topic | Description |
@@ -97,5 +81,15 @@ just e2e            # end-to-end tests (requires Docker)
 | [Provider Plugin Cache](doc/provider-cache.md) | Cache providers via PVC to speed up `tofu init` |
 | [kubectl Plugin](doc/kubectl-plugin.md) | CLI for plan, approve, suspend, resume |
 | [Examples](doc/examples.md) | AWS S3 bucket example and more |
+
+## Build & Test
+
+```bash
+just build          # compile the binary
+just docker-build   # build the container image
+just test           # run unit tests
+just test-cover     # run with coverage
+just e2e            # end-to-end tests (requires Docker)
+```
 
 PRs welcome.
