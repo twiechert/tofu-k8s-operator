@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: tofu-operator
+  name: tofu-k8s-operator
   namespace: tofu-system
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: tofu-operator
+      app: tofu-k8s-operator
   template:
     metadata:
       labels:
-        app: tofu-operator
+        app: tofu-k8s-operator
     spec:
-      serviceAccountName: tofu-operator
+      serviceAccountName: tofu-k8s-operator
       containers:
         - name: manager
-          image: tofu-operator:dev
+          image: tofu-k8s-operator:dev
           imagePullPolicy: IfNotPresent
           args:
             - --metrics-bind-address=:8080

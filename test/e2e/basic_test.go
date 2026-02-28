@@ -24,7 +24,7 @@ func TestTofuOperatorE2E(t *testing.T) {
 	}
 
 	// 2. Wait for operator pod to be ready
-	cmd = exec.CommandContext(ctx, "kubectl", "-n", "tofu-system", "wait", "--for=condition=Ready", "pod", "-l", "app=tofu-operator", "--timeout=60s")
+	cmd = exec.CommandContext(ctx, "kubectl", "-n", "tofu-system", "wait", "--for=condition=Ready", "pod", "-l", "app=tofu-k8s-operator", "--timeout=60s")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("operator pod not ready: %v\n%s", err, out)
 	}
@@ -41,14 +41,14 @@ func TestTofuOperatorE2E(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for Job to be created by operator")
 		}
-		cmd = exec.CommandContext(ctx, "kubectl", "-n", "default", "get", "jobs", "-l", "app.kubernetes.io/managed-by=tofu-operator", "-o", "name")
+		cmd = exec.CommandContext(ctx, "kubectl", "-n", "default", "get", "jobs", "-l", "app.kubernetes.io/managed-by=tofu-k8s-operator", "-o", "name")
 		out, _ := cmd.CombinedOutput()
 		if strings.TrimSpace(string(out)) != "" {
 			break
 		}
 		time.Sleep(2 * time.Second)
 	}
-	cmd = exec.CommandContext(ctx, "kubectl", "-n", "default", "wait", "--for=condition=complete", "job", "-l", "app.kubernetes.io/managed-by=tofu-operator", "--timeout=120s")
+	cmd = exec.CommandContext(ctx, "kubectl", "-n", "default", "wait", "--for=condition=complete", "job", "-l", "app.kubernetes.io/managed-by=tofu-k8s-operator", "--timeout=120s")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("job did not complete: %v\n%s", err, out)
 	}

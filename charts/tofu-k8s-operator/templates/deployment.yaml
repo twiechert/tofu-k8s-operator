@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: tofu-operator
+  name: tofu-k8s-operator
   namespace: {{ .Release.Namespace }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: tofu-operator
+      app: tofu-k8s-operator
   template:
     metadata:
       labels:
-        app: tofu-operator
+        app: tofu-k8s-operator
     spec:
-      serviceAccountName: tofu-operator
+      serviceAccountName: tofu-k8s-operator
       containers:
         - name: manager
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

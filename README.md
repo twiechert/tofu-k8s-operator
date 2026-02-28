@@ -31,7 +31,7 @@
 
 Helm (recommended):
 ```bash
-helm install tofu-k8s-operator ./charts/tofu-operator \
+helm install tofu-k8s-operator ./charts/tofu-k8s-operator \
   --namespace tofu-system \
   --create-namespace
 ```

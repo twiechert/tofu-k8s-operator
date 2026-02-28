@@ -128,7 +128,7 @@ func kubectlMayFail(args ...string) (string, error) {
 func deployOperator(t *testing.T) {
 	t.Helper()
 	kubectl(t, "apply", "-k", "../../deploy/")
-	kubectl(t, "-n", "tofu-system", "wait", "--for=condition=Ready", "pod", "-l", "app=tofu-operator", "--timeout=60s")
+	kubectl(t, "-n", "tofu-system", "wait", "--for=condition=Ready", "pod", "-l", "app=tofu-k8s-operator", "--timeout=60s")
 }
 
 func applyYAML(t *testing.T, yaml string) {

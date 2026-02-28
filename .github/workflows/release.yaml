@@ -49,6 +49,23 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package Helm chart
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          helm package charts/tofu-k8s-operator \
+            --version "$VERSION" \
+            --app-version "$VERSION" \
+            --destination .helm-pkg
+
+      - name: Push Helm chart to GHCR
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          helm push .helm-pkg/tofu-k8s-operator-${VERSION}.tgz \
+            oci://ghcr.io/${{ github.repository_owner }}/charts
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

@@ -30,7 +30,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	log := ctrl.Log.WithName("setup")
-	log.Info("starting tofu-operator")
+	log.Info("starting tofu-k8s-operator")
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -43,7 +43,7 @@ func main() {
 		Metrics:                server.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "tofu-operator.leader",
+		LeaderElectionID:       "tofu-k8s-operator.leader",
 	})
 	if err != nil {
 		log.Error(err, "unable to create manager")

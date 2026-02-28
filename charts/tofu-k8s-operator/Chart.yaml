@@ -1,6 +1,6 @@
 
 apiVersion: v2
-name: tofu-operator
+name: tofu-k8s-operator
 description: OpenTofu Kubernetes Operator
 type: application
 version: 0.1.0

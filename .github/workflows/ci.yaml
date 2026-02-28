@@ -41,4 +41,4 @@ jobs:
         run: go build -o bin/kubectl-tofu ./cmd/kubectl-tofu/
 
       - name: Build Docker image
-        run: docker build -t tofu-operator:ci .
+        run: docker build -t tofu-k8s-operator:ci .

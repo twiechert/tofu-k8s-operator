@@ -204,7 +204,7 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: cmName, Namespace: project.Namespace}}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
 		cm.Labels = mergeLabels(cm.Labels, map[string]string{
-			"app.kubernetes.io/managed-by": "tofu-operator",
+			"app.kubernetes.io/managed-by": "tofu-k8s-operator",
 			"tofu.example.com/project":     project.Name,
 		})
 		cm.Data = map[string]string{
@@ -644,7 +644,7 @@ func buildPlanJob(project tofuv1alpha1.TofuProject, jobName, cmName, image strin
 			Name:      jobName,
 			Namespace: project.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "tofu-operator",
+				"app.kubernetes.io/managed-by": "tofu-k8s-operator",
 				"tofu.example.com/project":     project.Name,
 				"tofu.example.com/job-type":    "plan",
 			},
@@ -757,7 +757,7 @@ func buildJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, p
 			Name:      jobName,
 			Namespace: project.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "tofu-operator",
+				"app.kubernetes.io/managed-by": "tofu-k8s-operator",
 				"tofu.example.com/project":     project.Name,
 				"tofu.example.com/job-type":    "apply",
 			},
@@ -1011,7 +1011,7 @@ func buildDestroyJob(project *tofuv1alpha1.TofuProject, jobName, cmName, image s
 			Name:      jobName,
 			Namespace: project.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "tofu-operator",
+				"app.kubernetes.io/managed-by": "tofu-k8s-operator",
 				"tofu.example.com/project":     project.Name,
 				"tofu.example.com/job-type":    "destroy",
 			},
@@ -1626,7 +1626,7 @@ func (r *TofuProjectReconciler) hasActiveNamespaceJobs(ctx context.Context, name
 	var jobList batchv1.JobList
 	if err := r.List(ctx, &jobList, client.InNamespace(namespace), client.MatchingLabelsSelector{
 		Selector: labels.SelectorFromSet(map[string]string{
-			"app.kubernetes.io/managed-by": "tofu-operator",
+			"app.kubernetes.io/managed-by": "tofu-k8s-operator",
 		}),
 	}); err != nil {
 		return false, err

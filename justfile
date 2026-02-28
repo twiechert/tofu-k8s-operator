@@ -1,6 +1,6 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-IMG := "tofu-operator:dev"
+IMG := "tofu-k8s-operator:dev"
 KIND_CLUSTER := "tofu-e2e"
 
 # Install development tools (macOS)
