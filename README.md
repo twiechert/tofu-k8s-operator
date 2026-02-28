@@ -16,7 +16,9 @@
 - [Cross-project output dependencies](doc/dependencies.md)
 - [Provider plugin cache](doc/provider-cache.md) via PVC
 - [Plan-then-approve](doc/plan-approve.md) workflow
-- [kubectl plugin](doc/kubectl-plugin.md) — `kubectl tofu plan|approve|suspend|resume`
+- [Delete protection](doc/delete-protection.md) — prevent accidental infrastructure destruction
+- Configurable service account — custom SA or annotations (IRSA/workload identity)
+- [kubectl plugin](doc/kubectl-plugin.md) — `kubectl tofu plan|approve|delete|suspend|resume`
 - Suspend mode — pause reconciliation entirely
 - Sync interval — periodic re-reconciliation
 - Automatic destroy via finalizer
@@ -47,17 +49,18 @@ kubectl apply -k deploy/
 
 ### Usage
 
+Reference a git repository (recommended):
+
 ```yaml
 apiVersion: tofu.example.com/v1alpha1
 kind: TofuProgram
 metadata:
   name: my-program
 spec:
-  programHCL: |
-    variable "name" { type = string }
-    resource "null_resource" "example" {
-      triggers = { name = var.name }
-    }
+  source:
+    url: https://github.com/example/infra.git
+    ref: main
+    path: modules/vpc
 ---
 apiVersion: tofu.example.com/v1alpha1
 kind: TofuProject
@@ -71,6 +74,21 @@ spec:
   autoApprove: true
 ```
 
+Or use inline HCL for simple programs:
+
+```yaml
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: my-program
+spec:
+  programHCL: |
+    variable "name" { type = string }
+    resource "null_resource" "example" {
+      triggers = { name = var.name }
+    }
+```
+
 ## Documentation
 
 | Topic | Description |
@@ -79,7 +97,8 @@ spec:
 | [Plan-Then-Approve](doc/plan-approve.md) | Review `tofu plan` output before applying |
 | [Cross-Project Dependencies](doc/dependencies.md) | Consume outputs from upstream projects as input params |
 | [Provider Plugin Cache](doc/provider-cache.md) | Cache providers via PVC to speed up `tofu init` |
-| [kubectl Plugin](doc/kubectl-plugin.md) | CLI for plan, approve, suspend, resume |
+| [Delete Protection](doc/delete-protection.md) | Prevent accidental infrastructure destruction |
+| [kubectl Plugin](doc/kubectl-plugin.md) | CLI for plan, approve, delete, suspend, resume |
 | [Examples](doc/examples.md) | AWS S3 bucket example and more |
 
 ## Build & Test

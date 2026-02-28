@@ -29,6 +29,13 @@ type CacheSpec struct {
 	StorageClass string `json:"storageClass,omitempty"`
 }
 
+type ServiceAccountSpec struct {
+	// name: use an existing ServiceAccount instead of auto-creating "tofu-runner"
+	Name string `json:"name,omitempty"`
+	// annotations added to the auto-created ServiceAccount (e.g. for IRSA/workload identity)
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
 type TofuProjectSpec struct {
 	ProgramRef ObjectRef `json:"programRef"`
 
@@ -41,14 +48,26 @@ type TofuProjectSpec struct {
 	// container image running `tofu` (default: ghcr.io/opentofu/opentofu:latest)
 	Image string `json:"image,omitempty"`
 
+	// serviceAccount configures the ServiceAccount used by tofu Jobs
+	ServiceAccount *ServiceAccountSpec `json:"serviceAccount,omitempty"`
+
 	// backend config for kubernetes state backend
 	Backend KubernetesBackendSpec `json:"backend,omitempty"`
 
 	// autoApprove passes -auto-approve to apply
 	AutoApprove bool `json:"autoApprove,omitempty"`
 
+	// applyImmediately controls whether the resource reports Ready only after apply completes.
+	// Default: true — the Ready condition stays False until the apply succeeds or errors,
+	// causing tools like ArgoCD to wait for completion.
+	// Set to false for async/fire-and-forget: Ready is set True immediately when a job is created.
+	ApplyImmediately *bool `json:"applyImmediately,omitempty"`
+
 	// suspend pauses reconciliation entirely when true
 	Suspend bool `json:"suspend,omitempty"`
+
+	// deleteProtection blocks deletion until explicitly approved
+	DeleteProtection bool `json:"deleteProtection,omitempty"`
 
 	// keepInSync: if true, the controller will run 'tofu apply' instead of 'tofu plan' in the sync loop.
 	KeepInSync bool `json:"keepInSync,omitempty"`
@@ -74,8 +93,9 @@ type TofuProjectStatus struct {
 	PendingPlanHash    string `json:"pendingPlanHash,omitempty"`
 	PlanOutput         string `json:"planOutput,omitempty"`
 	PlanSummary        string `json:"planSummary,omitempty"`
-	LastPlanJobName    string            `json:"lastPlanJobName,omitempty"`
-	Outputs            map[string]string `json:"outputs,omitempty"`
+	LastPlanJobName    string              `json:"lastPlanJobName,omitempty"`
+	Outputs            map[string]string   `json:"outputs,omitempty"`
+	Conditions         []metav1.Condition  `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -129,6 +149,20 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 			}
 		}
 	}
+	if in.Spec.ApplyImmediately != nil {
+		val := *in.Spec.ApplyImmediately
+		out.Spec.ApplyImmediately = &val
+	}
+	if in.Spec.ServiceAccount != nil {
+		saCopy := *in.Spec.ServiceAccount
+		if in.Spec.ServiceAccount.Annotations != nil {
+			saCopy.Annotations = map[string]string{}
+			for k, v := range in.Spec.ServiceAccount.Annotations {
+				saCopy.Annotations[k] = v
+			}
+		}
+		out.Spec.ServiceAccount = &saCopy
+	}
 	if in.Spec.Cache != nil {
 		cacheCopy := *in.Spec.Cache
 		out.Spec.Cache = &cacheCopy
@@ -138,6 +172,10 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 		for k, v := range in.Status.Outputs {
 			out.Status.Outputs[k] = v
 		}
+	}
+	if in.Status.Conditions != nil {
+		out.Status.Conditions = make([]metav1.Condition, len(in.Status.Conditions))
+		copy(out.Status.Conditions, in.Status.Conditions)
 	}
 	return out
 }

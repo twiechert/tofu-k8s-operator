@@ -45,6 +45,10 @@ func main() {
 		requireArgs(2, "resume <project> [-n namespace]")
 		name, ns := parseNameAndNamespace(2)
 		cmdResume(name, ns)
+	case "delete":
+		requireArgs(2, "delete <project> [-n namespace]")
+		name, ns := parseNameAndNamespace(2)
+		cmdDelete(name, ns)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		usage()
@@ -58,6 +62,7 @@ func usage() {
 Commands:
   plan      Show plan output and status
   approve   Approve a pending plan for apply
+  delete    Approve deletion of a delete-protected project
   suspend   Pause reconciliation
   resume    Resume reconciliation
 `)
@@ -168,6 +173,26 @@ func cmdApprove(name, ns string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Approved plan %s for %s/%s\n", pendingHash[:8], ns, name)
+}
+
+func cmdDelete(name, ns string) {
+	client := newDynamicClient()
+	ctx := context.Background()
+
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]interface{}{
+				"tofu.example.com/approved-delete": "true",
+			},
+		},
+	}
+	patchBytes, _ := json.Marshal(patch)
+	_, err := client.Resource(tofuProjectGVR).Namespace(ns).Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error approving delete for %s/%s: %v\n", ns, name, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Approved delete for %s/%s\n", ns, name)
 }
 
 func cmdSuspend(name, ns string) {

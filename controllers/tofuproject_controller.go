@@ -32,10 +32,11 @@ import (
 )
 
 const (
-	finalizerName          = "tofu.example.com/destroy"
-	approvedHashAnnotation = "tofu.example.com/approved-hash"
-	maxPlanOutputBytes     = 32 * 1024
-	outputMarker           = "---TOFU-OUTPUTS---"
+	finalizerName            = "tofu.example.com/destroy"
+	approvedHashAnnotation   = "tofu.example.com/approved-hash"
+	approvedDeleteAnnotation = "tofu.example.com/approved-delete"
+	maxPlanOutputBytes       = 32 * 1024
+	outputMarker             = "---TOFU-OUTPUTS---"
 )
 
 type TofuProjectReconciler struct {
@@ -118,7 +119,7 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if project.Status.Phase != "Suspended" {
 			project.Status.Phase = "Suspended"
 			project.Status.Message = "Reconciliation is suspended"
-			_ = r.Status().Update(ctx, &project)
+			r.updateStatusWithCondition(ctx, &project)
 		}
 		return ctrl.Result{}, nil
 	}
@@ -126,7 +127,7 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if project.Status.Phase == "Suspended" {
 		project.Status.Phase = ""
 		project.Status.Message = ""
-		_ = r.Status().Update(ctx, &project)
+		r.updateStatusWithCondition(ctx, &project)
 	}
 
 	// Fetch referenced program
@@ -138,7 +139,7 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.Get(ctx, types.NamespacedName{Name: project.Spec.ProgramRef.Name, Namespace: progNs}, &program); err != nil {
 		project.Status.Phase = "Error"
 		project.Status.Message = fmt.Sprintf("failed to get TofuProgram %s/%s: %v", progNs, project.Spec.ProgramRef.Name, err)
-		_ = r.Status().Update(ctx, &project)
+		r.updateStatusWithCondition(ctx, &project)
 		return ctrl.Result{}, err
 	}
 
@@ -147,13 +148,13 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if gitMode && program.Spec.ProgramHCL != "" {
 		project.Status.Phase = "Error"
 		project.Status.Message = "TofuProgram must set either programHCL or source, not both"
-		_ = r.Status().Update(ctx, &project)
+		r.updateStatusWithCondition(ctx, &project)
 		return ctrl.Result{}, fmt.Errorf("TofuProgram %s/%s has both programHCL and source set", progNs, program.Name)
 	}
 	if !gitMode && program.Spec.ProgramHCL == "" {
 		project.Status.Phase = "Error"
 		project.Status.Message = "TofuProgram must set either programHCL or source"
-		_ = r.Status().Update(ctx, &project)
+		r.updateStatusWithCondition(ctx, &project)
 		return ctrl.Result{}, fmt.Errorf("TofuProgram %s/%s has neither programHCL nor source set", progNs, program.Name)
 	}
 
@@ -220,30 +221,45 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	// Ensure ServiceAccount and RoleBinding for tofu runner exist in the project namespace
-	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "tofu-runner", Namespace: project.Namespace}}
-	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
-		return nil
-	})
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	rb := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "tofu-runner", Namespace: project.Namespace}}
-	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, rb, func() error {
-		rb.RoleRef = rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "ClusterRole",
-			Name:     "tofu-runner",
+	// Determine ServiceAccount name and ensure SA + RoleBinding exist
+	saName := "tofu-runner"
+	if project.Spec.ServiceAccount != nil && project.Spec.ServiceAccount.Name != "" {
+		// Use an existing SA — skip creation and RoleBinding
+		saName = project.Spec.ServiceAccount.Name
+	} else {
+		// Auto-create the SA, optionally with custom annotations
+		sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName, Namespace: project.Namespace}}
+		_, err = controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
+			if project.Spec.ServiceAccount != nil && len(project.Spec.ServiceAccount.Annotations) > 0 {
+				if sa.Annotations == nil {
+					sa.Annotations = map[string]string{}
+				}
+				for k, v := range project.Spec.ServiceAccount.Annotations {
+					sa.Annotations[k] = v
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return ctrl.Result{}, err
 		}
-		rb.Subjects = []rbacv1.Subject{{
-			Kind:      "ServiceAccount",
-			Name:      "tofu-runner",
-			Namespace: project.Namespace,
-		}}
-		return nil
-	})
-	if err != nil {
-		return ctrl.Result{}, err
+		rb := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: saName, Namespace: project.Namespace}}
+		_, err = controllerutil.CreateOrUpdate(ctx, r.Client, rb, func() error {
+			rb.RoleRef = rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "ClusterRole",
+				Name:     "tofu-runner",
+			}
+			rb.Subjects = []rbacv1.Subject{{
+				Kind:      "ServiceAccount",
+				Name:      saName,
+				Namespace: project.Namespace,
+			}}
+			return nil
+		})
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Ensure cache PVC if configured
@@ -270,7 +286,7 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			if project.Status.Phase != "Queued" {
 				project.Status.Phase = "Queued"
 				project.Status.Message = "Waiting for other jobs in namespace (shared cache)"
-				_ = r.Status().Update(ctx, &project)
+				r.updateStatusWithCondition(ctx, &project)
 			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
@@ -290,7 +306,7 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				log.Info("waiting for active Job to complete before creating a new one", "job", j.Name)
 				project.Status.Phase = "Running"
 				project.Status.LastJobName = j.Name
-				_ = r.Status().Update(ctx, &project)
+				r.updateStatusWithCondition(ctx, &project)
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
 		}
@@ -301,13 +317,13 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Branch based on autoApprove
 	cacheEnabled := cacheMode != ""
 	if project.Spec.AutoApprove {
-		return r.reconcileAutoApprove(ctx, &project, &program, appliedHash, cmName, image, syncInterval, cacheEnabled, cachePVCName)
+		return r.reconcileAutoApprove(ctx, &project, &program, appliedHash, cmName, image, syncInterval, cacheEnabled, cachePVCName, saName)
 	}
-	return r.reconcilePlanApprove(ctx, &project, &program, appliedHash, cmName, image, syncInterval, cacheEnabled, cachePVCName)
+	return r.reconcilePlanApprove(ctx, &project, &program, appliedHash, cmName, image, syncInterval, cacheEnabled, cachePVCName, saName)
 }
 
 // reconcileAutoApprove handles the existing auto-approve flow unchanged.
-func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, appliedHash, cmName, image string, syncInterval time.Duration, cacheEnabled bool, cachePVCName string) (ctrl.Result, error) {
+func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, appliedHash, cmName, image string, syncInterval time.Duration, cacheEnabled bool, cachePVCName string, saName string) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
 	// Skip if this hash was already successfully applied
@@ -323,7 +339,7 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 			return ctrl.Result{}, err
 		}
 		// Create a new Job
-		newJob := buildJob(*project, jobName, cmName, image, program)
+		newJob := buildJob(*project, jobName, cmName, image, program, saName)
 		if cacheEnabled {
 			addCacheToJob(newJob, cachePVCName)
 		}
@@ -336,7 +352,7 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 		project.Status.Phase = "Running"
 		project.Status.LastJobName = jobName
 		project.Status.Message = ""
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
@@ -355,21 +371,21 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 		if outputs != nil {
 			project.Status.Outputs = outputs
 		}
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return ctrl.Result{}, nil
 	}
 	if job.Status.Failed > 0 {
 		project.Status.Phase = "Error"
 		project.Status.LastJobName = jobName
 		project.Status.Message = "Job failed"
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return ctrl.Result{}, nil
 	}
 
 	// Job still running
 	project.Status.Phase = "Running"
 	project.Status.LastJobName = jobName
-	_ = r.Status().Update(ctx, project)
+	r.updateStatusWithCondition(ctx, project)
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
@@ -378,7 +394,7 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 // 1. No plan yet (or hash changed) → create plan job → "Planning"
 // 2. Plan done → read logs, store output → "WaitingApproval"
 // 3. Approved (annotation matches hash) → create apply job → "Running"
-func (r *TofuProjectReconciler) reconcilePlanApprove(ctx context.Context, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, appliedHash, cmName, image string, syncInterval time.Duration, cacheEnabled bool, cachePVCName string) (ctrl.Result, error) {
+func (r *TofuProjectReconciler) reconcilePlanApprove(ctx context.Context, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, appliedHash, cmName, image string, syncInterval time.Duration, cacheEnabled bool, cachePVCName string, saName string) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
 	// Skip if this hash was already successfully applied
@@ -403,7 +419,7 @@ func (r *TofuProjectReconciler) reconcilePlanApprove(ctx context.Context, projec
 				}
 			}
 		}
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 	}
 
 	// Check if approved
@@ -413,7 +429,7 @@ func (r *TofuProjectReconciler) reconcilePlanApprove(ctx context.Context, projec
 	}
 	if approvedHash == appliedHash {
 		// Approved — create apply job
-		return r.createApplyAfterApproval(ctx, project, program, appliedHash, cmName, image, syncInterval, cacheEnabled, cachePVCName)
+		return r.createApplyAfterApproval(ctx, project, program, appliedHash, cmName, image, syncInterval, cacheEnabled, cachePVCName, saName)
 	}
 
 	// Check if we already have a plan for this hash
@@ -431,7 +447,7 @@ func (r *TofuProjectReconciler) reconcilePlanApprove(ctx context.Context, projec
 			return ctrl.Result{}, err
 		}
 		// No plan job yet — create one
-		return r.ensurePlanJob(ctx, project, program, appliedHash, cmName, image, planJobName, cacheEnabled, cachePVCName)
+		return r.ensurePlanJob(ctx, project, program, appliedHash, cmName, image, planJobName, cacheEnabled, cachePVCName, saName)
 	}
 
 	// Plan job exists — check status
@@ -439,8 +455,8 @@ func (r *TofuProjectReconciler) reconcilePlanApprove(ctx context.Context, projec
 }
 
 // ensurePlanJob creates a plan job for the given hash.
-func (r *TofuProjectReconciler) ensurePlanJob(ctx context.Context, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, appliedHash, cmName, image, planJobName string, cacheEnabled bool, cachePVCName string) (ctrl.Result, error) {
-	newJob := buildPlanJob(*project, planJobName, cmName, image, program)
+func (r *TofuProjectReconciler) ensurePlanJob(ctx context.Context, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, appliedHash, cmName, image, planJobName string, cacheEnabled bool, cachePVCName string, saName string) (ctrl.Result, error) {
+	newJob := buildPlanJob(*project, planJobName, cmName, image, program, saName)
 	if cacheEnabled {
 		addCacheToJob(newJob, cachePVCName)
 	}
@@ -453,7 +469,7 @@ func (r *TofuProjectReconciler) ensurePlanJob(ctx context.Context, project *tofu
 	project.Status.Phase = "Planning"
 	project.Status.LastPlanJobName = planJobName
 	project.Status.Message = ""
-	_ = r.Status().Update(ctx, project)
+	r.updateStatusWithCondition(ctx, project)
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
@@ -476,7 +492,7 @@ func (r *TofuProjectReconciler) handlePlanJobStatus(ctx context.Context, project
 		project.Status.PlanSummary = extractPlanSummary(output)
 		project.Status.LastPlanJobName = planJob.Name
 		project.Status.Message = "Plan complete. Approve to apply."
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return ctrl.Result{}, nil
 	}
 	if planJob.Status.Failed > 0 {
@@ -491,19 +507,19 @@ func (r *TofuProjectReconciler) handlePlanJobStatus(ctx context.Context, project
 		project.Status.LastPlanJobName = planJob.Name
 		project.Status.PlanOutput = output
 		project.Status.Message = "Plan job failed"
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return ctrl.Result{}, nil
 	}
 
 	// Still running
 	project.Status.Phase = "Planning"
 	project.Status.LastPlanJobName = planJob.Name
-	_ = r.Status().Update(ctx, project)
+	r.updateStatusWithCondition(ctx, project)
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
 // createApplyAfterApproval creates an apply job after the plan has been approved.
-func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, appliedHash, cmName, image string, syncInterval time.Duration, cacheEnabled bool, cachePVCName string) (ctrl.Result, error) {
+func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, appliedHash, cmName, image string, syncInterval time.Duration, cacheEnabled bool, cachePVCName string, saName string) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 	jobName := fmt.Sprintf("%s-apply-%s", project.Name, appliedHash[:8])
 	job := &batchv1.Job{}
@@ -512,7 +528,7 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 			return ctrl.Result{}, err
 		}
 		// Create apply job — always with auto-approve since plan was already reviewed
-		newJob := buildApplyJob(*project, jobName, cmName, image, program)
+		newJob := buildApplyJob(*project, jobName, cmName, image, program, saName)
 		if cacheEnabled {
 			addCacheToJob(newJob, cachePVCName)
 		}
@@ -525,7 +541,7 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		project.Status.Phase = "Running"
 		project.Status.LastJobName = jobName
 		project.Status.Message = "Applying approved plan"
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
@@ -548,21 +564,21 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		if outputs != nil {
 			project.Status.Outputs = outputs
 		}
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return requeueAfter(syncInterval), nil
 	}
 	if job.Status.Failed > 0 {
 		project.Status.Phase = "Error"
 		project.Status.LastJobName = jobName
 		project.Status.Message = "Apply job failed"
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return ctrl.Result{}, nil
 	}
 
 	// Job still running
 	project.Status.Phase = "Running"
 	project.Status.LastJobName = jobName
-	_ = r.Status().Update(ctx, project)
+	r.updateStatusWithCondition(ctx, project)
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
@@ -615,7 +631,7 @@ func extractPlanSummary(output string) string {
 }
 
 // buildPlanJob creates a Job that runs `tofu plan`.
-func buildPlanJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram) *batchv1.Job {
+func buildPlanJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram, saName string) *batchv1.Job {
 	backoff := int32(0)
 	workspace := project.Spec.Workspace
 	gitMode := isGitSource(program)
@@ -635,7 +651,7 @@ func buildPlanJob(project tofuv1alpha1.TofuProject, jobName, cmName, image strin
 			BackoffLimit: &backoff,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "tofu-runner",
+					ServiceAccountName: saName,
 					RestartPolicy:      corev1.RestartPolicyNever,
 					Containers: []corev1.Container{{
 						Name:       "tofu",
@@ -698,11 +714,11 @@ func buildPlanJob(project tofuv1alpha1.TofuProject, jobName, cmName, image strin
 }
 
 // buildApplyJob creates an apply Job that always uses -auto-approve (for plan-approve flow).
-func buildApplyJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram) *batchv1.Job {
+func buildApplyJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram, saName string) *batchv1.Job {
 	// Force auto-approve since the plan has already been reviewed
 	projectCopy := project
 	projectCopy.Spec.AutoApprove = true
-	job := buildJob(projectCopy, jobName, cmName, image, program)
+	job := buildJob(projectCopy, jobName, cmName, image, program, saName)
 	return job
 }
 
@@ -728,7 +744,7 @@ tofu init -input=false
 `, copyStep, ws)
 }
 
-func buildJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram) *batchv1.Job {
+func buildJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram, saName string) *batchv1.Job {
 	backoff := int32(0)
 	workspace := project.Spec.Workspace
 	gitMode := isGitSource(program)
@@ -748,7 +764,7 @@ func buildJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, p
 			BackoffLimit: &backoff,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "tofu-runner",
+					ServiceAccountName: saName,
 					RestartPolicy:      corev1.RestartPolicyNever,
 					Containers: []corev1.Container{{
 						Name:       "tofu",
@@ -878,6 +894,22 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 	log := ctrl.LoggerFrom(ctx)
 	log.Info("handling destroy for TofuProject", "name", project.Name)
 
+	// Delete protection — block until explicitly approved
+	if project.Spec.DeleteProtection {
+		approved := false
+		if ann := project.GetAnnotations(); ann != nil {
+			approved = ann[approvedDeleteAnnotation] == "true"
+		}
+		if !approved {
+			if project.Status.Phase != "WaitingDeleteApproval" {
+				project.Status.Phase = "WaitingDeleteApproval"
+				project.Status.Message = "Delete protection enabled. Run 'kubectl tofu delete <name>' to approve."
+				r.updateStatusWithCondition(ctx, project)
+			}
+			return ctrl.Result{}, nil
+		}
+	}
+
 	// The ConfigMap must still exist (owned by the project, protected by finalizer).
 	cmName := fmt.Sprintf("%s-tf", project.Name)
 	var cm corev1.ConfigMap
@@ -914,6 +946,12 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 		programPtr = &program
 	}
 
+	// Determine SA name for destroy job
+	saName := "tofu-runner"
+	if project.Spec.ServiceAccount != nil && project.Spec.ServiceAccount.Name != "" {
+		saName = project.Spec.ServiceAccount.Name
+	}
+
 	jobName := fmt.Sprintf("%s-destroy", project.Name)
 	var job batchv1.Job
 	if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: project.Namespace}, &job); err != nil {
@@ -921,7 +959,7 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 			return ctrl.Result{}, err
 		}
 		// Create the destroy Job
-		newJob := buildDestroyJob(project, jobName, cmName, image, programPtr)
+		newJob := buildDestroyJob(project, jobName, cmName, image, programPtr, saName)
 		cacheMode := r.cacheMode(project)
 		if cacheMode != "" {
 			pvcName, err := r.ensureCachePVC(ctx, project, cacheMode)
@@ -936,7 +974,7 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 		project.Status.Phase = "Destroying"
 		project.Status.LastJobName = jobName
 		project.Status.Message = ""
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
@@ -949,7 +987,7 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 	if job.Status.Failed > 0 {
 		project.Status.Phase = "DestroyFailed"
 		project.Status.Message = "Destroy job failed"
-		_ = r.Status().Update(ctx, project)
+		r.updateStatusWithCondition(ctx, project)
 		return ctrl.Result{}, nil
 	}
 
@@ -957,7 +995,7 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-func buildDestroyJob(project *tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram) *batchv1.Job {
+func buildDestroyJob(project *tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram, saName string) *batchv1.Job {
 	backoff := int32(0)
 	gitMode := program != nil && isGitSource(program)
 	var source *tofuv1alpha1.GitSource
@@ -980,7 +1018,7 @@ func buildDestroyJob(project *tofuv1alpha1.TofuProject, jobName, cmName, image s
 			BackoffLimit: &backoff,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "tofu-runner",
+					ServiceAccountName: saName,
 					RestartPolicy:      corev1.RestartPolicyNever,
 					Containers: []corev1.Container{{
 						Name:       "tofu",
@@ -1256,7 +1294,7 @@ func (r *TofuProjectReconciler) resolveDependencies(ctx context.Context, project
 				log.Info("upstream dependency not found, waiting", "upstream", dep.ProjectRef.Name)
 				project.Status.Phase = "WaitingDependency"
 				project.Status.Message = fmt.Sprintf("Waiting for upstream project %s/%s", upstreamNs, dep.ProjectRef.Name)
-				_ = r.Status().Update(ctx, project)
+				r.updateStatusWithCondition(ctx, project)
 				return nil, "", ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 			}
 			return nil, "", ctrl.Result{}, err
@@ -1266,7 +1304,7 @@ func (r *TofuProjectReconciler) resolveDependencies(ctx context.Context, project
 			log.Info("upstream dependency not yet succeeded, waiting", "upstream", dep.ProjectRef.Name, "phase", upstream.Status.Phase)
 			project.Status.Phase = "WaitingDependency"
 			project.Status.Message = fmt.Sprintf("Waiting for upstream project %s/%s (phase: %s)", upstreamNs, dep.ProjectRef.Name, upstream.Status.Phase)
-			_ = r.Status().Update(ctx, project)
+			r.updateStatusWithCondition(ctx, project)
 			return nil, "", ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 		}
 
@@ -1276,7 +1314,7 @@ func (r *TofuProjectReconciler) resolveDependencies(ctx context.Context, project
 				log.Info("upstream output not found, waiting", "upstream", dep.ProjectRef.Name, "output", upstreamOutput)
 				project.Status.Phase = "WaitingDependency"
 				project.Status.Message = fmt.Sprintf("Waiting for output %q from upstream %s/%s", upstreamOutput, upstreamNs, dep.ProjectRef.Name)
-				_ = r.Status().Update(ctx, project)
+				r.updateStatusWithCondition(ctx, project)
 				return nil, "", ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 			}
 			effectiveParams[downstreamParam] = val
@@ -1417,4 +1455,75 @@ func sanitizeSecretKey(key string) string {
 		return ""
 	}
 	return out
+}
+
+// applyImmediately returns the effective value of spec.applyImmediately (default true).
+func applyImmediately(project *tofuv1alpha1.TofuProject) bool {
+	if project.Spec.ApplyImmediately == nil {
+		return true
+	}
+	return *project.Spec.ApplyImmediately
+}
+
+// updateReadyCondition derives the Ready condition from the current phase and applyImmediately setting.
+func updateReadyCondition(project *tofuv1alpha1.TofuProject) {
+	now := metav1.Now()
+	var status metav1.ConditionStatus
+	var reason, message string
+
+	switch project.Status.Phase {
+	case "Succeeded":
+		status = metav1.ConditionTrue
+		reason = "Applied"
+		message = "Apply completed successfully"
+	case "Error", "DestroyFailed":
+		status = metav1.ConditionFalse
+		reason = "Error"
+		message = project.Status.Message
+	default:
+		// Running, Planning, WaitingApproval, WaitingDeleteApproval, Suspended, etc.
+		if !applyImmediately(project) {
+			status = metav1.ConditionTrue
+			reason = "Accepted"
+			message = "Resource accepted, execution is asynchronous"
+		} else {
+			status = metav1.ConditionFalse
+			reason = "Progressing"
+			message = project.Status.Message
+			if message == "" {
+				message = "Waiting for completion"
+			}
+		}
+	}
+
+	setCondition(project, "Ready", status, reason, message, now)
+}
+
+func setCondition(project *tofuv1alpha1.TofuProject, condType string, status metav1.ConditionStatus, reason, message string, now metav1.Time) {
+	for i, c := range project.Status.Conditions {
+		if c.Type == condType {
+			if c.Status != status {
+				project.Status.Conditions[i].LastTransitionTime = now
+			}
+			project.Status.Conditions[i].Status = status
+			project.Status.Conditions[i].Reason = reason
+			project.Status.Conditions[i].Message = message
+			project.Status.Conditions[i].ObservedGeneration = project.Generation
+			return
+		}
+	}
+	project.Status.Conditions = append(project.Status.Conditions, metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		ObservedGeneration: project.Generation,
+		LastTransitionTime: now,
+		Reason:             reason,
+		Message:            message,
+	})
+}
+
+// updateStatusWithCondition updates the status subresource and automatically sets the Ready condition.
+func (r *TofuProjectReconciler) updateStatusWithCondition(ctx context.Context, project *tofuv1alpha1.TofuProject) {
+	updateReadyCondition(project)
+	_ = r.Status().Update(ctx, project)
 }

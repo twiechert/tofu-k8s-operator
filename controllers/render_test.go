@@ -248,7 +248,7 @@ func TestBuildPlanJobLabels(t *testing.T) {
 			ProgramHCL: "resource \"null_resource\" \"test\" {}",
 		},
 	}
-	job := buildPlanJob(project, "myproj-plan-abc12345", "myproj-tf", "opentofu:latest", program)
+	job := buildPlanJob(project, "myproj-plan-abc12345", "myproj-tf", "opentofu:latest", program, "tofu-runner")
 	if job.Labels["tofu.example.com/job-type"] != "plan" {
 		t.Fatalf("expected job-type=plan label, got %q", job.Labels["tofu.example.com/job-type"])
 	}
@@ -264,7 +264,7 @@ func TestBuildApplyJobForcesAutoApprove(t *testing.T) {
 			ProgramHCL: "resource \"null_resource\" \"test\" {}",
 		},
 	}
-	job := buildApplyJob(project, "myproj-apply-abc12345", "myproj-tf", "opentofu:latest", program)
+	job := buildApplyJob(project, "myproj-apply-abc12345", "myproj-tf", "opentofu:latest", program, "tofu-runner")
 	cmd := job.Spec.Template.Spec.Containers[0].Command[2]
 	if !strings.Contains(cmd, "-auto-approve") {
 		t.Fatal("buildApplyJob should force -auto-approve even when spec.autoApprove is false")
@@ -280,7 +280,7 @@ func TestBuildJobApplyLabel(t *testing.T) {
 			ProgramHCL: "resource \"null_resource\" \"test\" {}",
 		},
 	}
-	job := buildJob(project, "myproj-apply-abc12345", "myproj-tf", "opentofu:latest", program)
+	job := buildJob(project, "myproj-apply-abc12345", "myproj-tf", "opentofu:latest", program, "tofu-runner")
 	if job.Labels["tofu.example.com/job-type"] != "apply" {
 		t.Fatalf("expected job-type=apply label, got %q", job.Labels["tofu.example.com/job-type"])
 	}
@@ -295,7 +295,7 @@ func TestBuildDestroyJobLabel(t *testing.T) {
 			ProgramHCL: "resource \"null_resource\" \"test\" {}",
 		},
 	}
-	job := buildDestroyJob(project, "myproj-destroy", "myproj-tf", "opentofu:latest", program)
+	job := buildDestroyJob(project, "myproj-destroy", "myproj-tf", "opentofu:latest", program, "tofu-runner")
 	if job.Labels["tofu.example.com/job-type"] != "destroy" {
 		t.Fatalf("expected job-type=destroy label, got %q", job.Labels["tofu.example.com/job-type"])
 	}
@@ -408,7 +408,7 @@ func TestAddCacheToJob(t *testing.T) {
 			ProgramHCL: "resource \"null_resource\" \"test\" {}",
 		},
 	}
-	job := buildJob(project, "myproj-apply-abc12345", "myproj-tf", "opentofu:latest", program)
+	job := buildJob(project, "myproj-apply-abc12345", "myproj-tf", "opentofu:latest", program, "tofu-runner")
 	addCacheToJob(job, "tofu-plugin-cache")
 
 	// Check volume
