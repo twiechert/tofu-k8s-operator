@@ -40,10 +40,10 @@ metadata:
   namespace: default
 spec:
   programHCL: |
-    variable "vpc_id" { type = string }
+    variable "network_id" { type = string }
 
     resource "null_resource" "app" {
-      triggers = { vpc_id = var.vpc_id }
+      triggers = { network_id = var.network_id }
     }
 ---
 apiVersion: tofu.example.com/v1alpha1
@@ -59,4 +59,4 @@ spec:
     - projectRef:
         name: upstream
       outputs:
-        vpc_id: vpc_id   # upstream output "vpc_id" → downstream param "vpc_id"
+        vpc_id: network_id   # upstream output "vpc_id" → downstream param "network_id"

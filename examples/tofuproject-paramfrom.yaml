@@ -1,0 +1,43 @@
+# Example: bulk-import params from a ConfigMap and a Secret
+#
+# Precedence (lowest → highest):
+#   paramFrom → paramBindings → params (inline) → dependency outputs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-config
+  namespace: default
+data:
+  environment: "staging"
+  region: "eu-west-1"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: default
+stringData:
+  db_password: "s3cret-value"
+---
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: paramfrom-example
+  namespace: default
+spec:
+  programRef:
+    name: hello
+  # Bulk-import all keys from ConfigMap and Secret as params
+  paramFrom:
+    - configMapRef:
+        name: shared-config
+    - secretRef:
+        name: db-credentials
+  # Inline params override paramFrom values
+  params:
+    environment: "production"   # overrides "staging" from ConfigMap
+  backend:
+    secretSuffix: "paramfrom-example"
+    namespace: "default"
+  autoApprove: true
