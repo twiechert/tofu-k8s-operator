@@ -178,6 +178,88 @@ spec:
                       description: "'shared' or 'dedicated'"
                     size: {type: string}
                     storageClass: {type: string}
+                env:
+                  type: array
+                  description: "Extra environment variables injected into tofu Job containers"
+                  items:
+                    type: object
+                    required: ["name"]
+                    properties:
+                      name: {type: string}
+                      value: {type: string}
+                      valueFrom:
+                        type: object
+                        properties:
+                          configMapKeyRef:
+                            type: object
+                            properties:
+                              name: {type: string}
+                              key: {type: string}
+                          secretKeyRef:
+                            type: object
+                            properties:
+                              name: {type: string}
+                              key: {type: string}
+                          fieldRef:
+                            type: object
+                            properties:
+                              fieldPath: {type: string}
+                envFrom:
+                  type: array
+                  description: "Bulk env import from ConfigMaps/Secrets"
+                  items:
+                    type: object
+                    properties:
+                      prefix: {type: string}
+                      configMapRef:
+                        type: object
+                        properties:
+                          name: {type: string}
+                      secretRef:
+                        type: object
+                        properties:
+                          name: {type: string}
+                resources:
+                  type: object
+                  description: "Resource requests/limits for tofu Job containers"
+                  properties:
+                    limits:
+                      type: object
+                      additionalProperties: {type: string}
+                    requests:
+                      type: object
+                      additionalProperties: {type: string}
+                retryPolicy:
+                  type: object
+                  description: "Retry failed Jobs before marking as Error"
+                  properties:
+                    maxRetries:
+                      type: integer
+                      format: int32
+                    delay:
+                      type: string
+                      description: "Delay between retries (e.g. '30s', '1m'). Default: 30s"
+                driftDetection:
+                  type: object
+                  properties:
+                    enabled: {type: boolean}
+                    interval:
+                      type: string
+                      description: "How often to check for drift (e.g. '15m', '1h'). Default: 15m"
+                notifications:
+                  type: object
+                  description: "Notification hooks for lifecycle events"
+                  properties:
+                    webhooks:
+                      type: array
+                      items:
+                        type: object
+                        required: ["url", "events"]
+                        properties:
+                          url: {type: string}
+                          events:
+                            type: array
+                            items: {type: string}
             status:
               type: object
               properties:
@@ -196,6 +278,9 @@ spec:
                 outputs:
                   type: object
                   additionalProperties: {type: string}
+                retryCount: {type: integer, format: int32}
+                lastDriftCheckTime: {type: string, format: date-time}
+                driftDetected: {type: boolean}
                 conditions:
                   type: array
                   items:

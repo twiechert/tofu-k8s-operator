@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -303,6 +304,10 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 		for i := range jobList.Items {
 			j := &jobList.Items[i]
+			// Skip drift detection jobs — they run independently
+			if j.Labels["tofu.example.com/job-type"] == "drift" {
+				continue
+			}
 			if j.Status.Succeeded == 0 && j.Status.Failed == 0 {
 				// A Job is still active — wait for it to finish
 				log.Info("waiting for active Job to complete before creating a new one", "job", j.Name)
@@ -330,6 +335,10 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 
 	// Skip if this hash was already successfully applied
 	if project.Status.LastAppliedHash == appliedHash {
+		// Check for drift if enabled
+		if project.Spec.DriftDetection != nil && project.Spec.DriftDetection.Enabled {
+			return r.reconcileDriftDetection(ctx, project, program, cmName, image, syncInterval, cacheEnabled, cachePVCName, saName)
+		}
 		return requeueAfter(syncInterval), nil
 	}
 
@@ -344,6 +353,10 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 		newJob := buildJob(*project, jobName, cmName, image, program, saName)
 		if cacheEnabled {
 			addCacheToJob(newJob, cachePVCName)
+		}
+		addEnvToJob(newJob, project)
+		if err := addResourcesToJob(newJob, project); err != nil {
+			return ctrl.Result{}, err
 		}
 		if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
 			return ctrl.Result{}, err
@@ -370,17 +383,36 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 		project.Status.LastJobName = jobName
 		project.Status.SyncStatus = "sync"
 		project.Status.Message = ""
+		project.Status.RetryCount = 0
+		project.Status.DriftDetected = false
+		// Set drift check time so drift detection doesn't fire immediately after apply
+		if project.Spec.DriftDetection != nil && project.Spec.DriftDetection.Enabled {
+			now := metav1.Now()
+			project.Status.LastDriftCheckTime = &now
+		}
 		if outputs != nil {
 			project.Status.Outputs = outputs
 		}
 		r.updateStatusWithCondition(ctx, project)
+		sendNotification(ctx, project, "apply:success")
 		return ctrl.Result{}, nil
 	}
 	if job.Status.Failed > 0 {
+		// Retry if policy is configured
+		if project.Spec.RetryPolicy != nil && project.Status.RetryCount < project.Spec.RetryPolicy.MaxRetries {
+			project.Status.RetryCount++
+			delay := parseRetryDelay(project.Spec.RetryPolicy.Delay)
+			project.Status.Phase = "Retrying"
+			project.Status.Message = fmt.Sprintf("Retry %d/%d after failure", project.Status.RetryCount, project.Spec.RetryPolicy.MaxRetries)
+			_ = r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))
+			r.updateStatusWithCondition(ctx, project)
+			return ctrl.Result{RequeueAfter: delay}, nil
+		}
 		project.Status.Phase = "Error"
 		project.Status.LastJobName = jobName
 		project.Status.Message = "Job failed"
 		r.updateStatusWithCondition(ctx, project)
+		sendNotification(ctx, project, "apply:error")
 		return ctrl.Result{}, nil
 	}
 
@@ -401,6 +433,10 @@ func (r *TofuProjectReconciler) reconcilePlanApprove(ctx context.Context, projec
 
 	// Skip if this hash was already successfully applied
 	if project.Status.LastAppliedHash == appliedHash {
+		// Check for drift if enabled
+		if project.Spec.DriftDetection != nil && project.Spec.DriftDetection.Enabled {
+			return r.reconcileDriftDetection(ctx, project, program, cmName, image, syncInterval, cacheEnabled, cachePVCName, saName)
+		}
 		return requeueAfter(syncInterval), nil
 	}
 
@@ -462,6 +498,10 @@ func (r *TofuProjectReconciler) ensurePlanJob(ctx context.Context, project *tofu
 	if cacheEnabled {
 		addCacheToJob(newJob, cachePVCName)
 	}
+	addEnvToJob(newJob, project)
+	if err := addResourcesToJob(newJob, project); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -495,6 +535,7 @@ func (r *TofuProjectReconciler) handlePlanJobStatus(ctx context.Context, project
 		project.Status.LastPlanJobName = planJob.Name
 		project.Status.Message = "Plan complete. Approve to apply."
 		r.updateStatusWithCondition(ctx, project)
+		sendNotification(ctx, project, "plan:complete")
 		return ctrl.Result{}, nil
 	}
 	if planJob.Status.Failed > 0 {
@@ -534,6 +575,10 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		if cacheEnabled {
 			addCacheToJob(newJob, cachePVCName)
 		}
+		addEnvToJob(newJob, project)
+		if err := addResourcesToJob(newJob, project); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -559,6 +604,13 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		project.Status.LastJobName = jobName
 		project.Status.SyncStatus = "sync"
 		project.Status.Message = ""
+		project.Status.RetryCount = 0
+		project.Status.DriftDetected = false
+		// Set drift check time so drift detection doesn't fire immediately after apply
+		if project.Spec.DriftDetection != nil && project.Spec.DriftDetection.Enabled {
+			now := metav1.Now()
+			project.Status.LastDriftCheckTime = &now
+		}
 		// Clear plan fields after successful apply
 		project.Status.PendingPlanHash = ""
 		project.Status.PlanOutput = ""
@@ -567,13 +619,25 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 			project.Status.Outputs = outputs
 		}
 		r.updateStatusWithCondition(ctx, project)
+		sendNotification(ctx, project, "apply:success")
 		return requeueAfter(syncInterval), nil
 	}
 	if job.Status.Failed > 0 {
+		// Retry if policy is configured
+		if project.Spec.RetryPolicy != nil && project.Status.RetryCount < project.Spec.RetryPolicy.MaxRetries {
+			project.Status.RetryCount++
+			delay := parseRetryDelay(project.Spec.RetryPolicy.Delay)
+			project.Status.Phase = "Retrying"
+			project.Status.Message = fmt.Sprintf("Retry %d/%d after failure", project.Status.RetryCount, project.Spec.RetryPolicy.MaxRetries)
+			_ = r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))
+			r.updateStatusWithCondition(ctx, project)
+			return ctrl.Result{RequeueAfter: delay}, nil
+		}
 		project.Status.Phase = "Error"
 		project.Status.LastJobName = jobName
 		project.Status.Message = "Apply job failed"
 		r.updateStatusWithCondition(ctx, project)
+		sendNotification(ctx, project, "apply:error")
 		return ctrl.Result{}, nil
 	}
 
@@ -969,6 +1033,10 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 				return ctrl.Result{}, err
 			}
 			addCacheToJob(newJob, pvcName)
+		}
+		addEnvToJob(newJob, project)
+		if err := addResourcesToJob(newJob, project); err != nil {
+			return ctrl.Result{}, err
 		}
 		if err := r.Create(ctx, newJob); err != nil {
 			return ctrl.Result{}, err
@@ -1621,6 +1689,111 @@ func addCacheToJob(job *batchv1.Job, pvcName string) {
 	)
 }
 
+// addEnvToJob injects user-specified env vars and envFrom into the first container of a Job.
+func addEnvToJob(job *batchv1.Job, project *tofuv1alpha1.TofuProject) {
+	if len(project.Spec.Env) > 0 {
+		job.Spec.Template.Spec.Containers[0].Env = append(
+			job.Spec.Template.Spec.Containers[0].Env,
+			project.Spec.Env...,
+		)
+	}
+	if len(project.Spec.EnvFrom) > 0 {
+		job.Spec.Template.Spec.Containers[0].EnvFrom = append(
+			job.Spec.Template.Spec.Containers[0].EnvFrom,
+			project.Spec.EnvFrom...,
+		)
+	}
+}
+
+// addResourcesToJob sets resource requests/limits on the first container of a Job.
+func addResourcesToJob(job *batchv1.Job, project *tofuv1alpha1.TofuProject) error {
+	if project.Spec.Resources == nil {
+		return nil
+	}
+	res := corev1.ResourceRequirements{}
+	if len(project.Spec.Resources.Limits) > 0 {
+		res.Limits = corev1.ResourceList{}
+		for k, v := range project.Spec.Resources.Limits {
+			qty, err := resource.ParseQuantity(v)
+			if err != nil {
+				return fmt.Errorf("parsing resource limit %s=%s: %w", k, v, err)
+			}
+			res.Limits[corev1.ResourceName(k)] = qty
+		}
+	}
+	if len(project.Spec.Resources.Requests) > 0 {
+		res.Requests = corev1.ResourceList{}
+		for k, v := range project.Spec.Resources.Requests {
+			qty, err := resource.ParseQuantity(v)
+			if err != nil {
+				return fmt.Errorf("parsing resource request %s=%s: %w", k, v, err)
+			}
+			res.Requests[corev1.ResourceName(k)] = qty
+		}
+	}
+	job.Spec.Template.Spec.Containers[0].Resources = res
+	return nil
+}
+
+// parseRetryDelay parses a retry delay string. Returns 30s on empty or invalid input.
+func parseRetryDelay(s string) time.Duration {
+	if s == "" {
+		return 30 * time.Second
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 30 * time.Second
+	}
+	return d
+}
+
+// sendNotification sends webhook notifications for lifecycle events.
+func sendNotification(ctx context.Context, project *tofuv1alpha1.TofuProject, event string) {
+	if project.Spec.Notifications == nil {
+		return
+	}
+	log := ctrl.LoggerFrom(ctx)
+	payload := map[string]string{
+		"project":   project.Name,
+		"namespace": project.Namespace,
+		"event":     event,
+		"phase":     project.Status.Phase,
+		"message":   project.Status.Message,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Error(err, "failed to marshal notification payload")
+		return
+	}
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	for _, wh := range project.Spec.Notifications.Webhooks {
+		matched := false
+		for _, e := range wh.Events {
+			if e == event {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, wh.URL, bytes.NewReader(body))
+		if err != nil {
+			log.Error(err, "failed to create notification request", "url", wh.URL)
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			log.Error(err, "failed to send notification", "url", wh.URL, "event", event)
+			continue
+		}
+		resp.Body.Close()
+	}
+}
+
 // hasActiveNamespaceJobs checks if there are any active tofu-operator jobs in the namespace.
 func (r *TofuProjectReconciler) hasActiveNamespaceJobs(ctx context.Context, namespace string) (bool, error) {
 	var jobList batchv1.JobList
@@ -1660,6 +1833,119 @@ func sanitizeSecretKey(key string) string {
 	return out
 }
 
+// reconcileDriftDetection runs periodic plan-only jobs to detect drift.
+func (r *TofuProjectReconciler) reconcileDriftDetection(ctx context.Context, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, cmName, image string, syncInterval time.Duration, cacheEnabled bool, cachePVCName string, saName string) (ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
+
+	interval := parseDriftInterval(project.Spec.DriftDetection.Interval)
+
+	// Check if it's too early for a drift check
+	if project.Status.LastDriftCheckTime != nil {
+		elapsed := time.Since(project.Status.LastDriftCheckTime.Time)
+		if elapsed < interval {
+			remaining := interval - elapsed
+			return ctrl.Result{RequeueAfter: remaining}, nil
+		}
+	}
+
+	// Look for existing drift job
+	ts := time.Now().Unix()
+	driftJobName := fmt.Sprintf("%s-drift-%d", project.Name, ts)
+
+	// Find existing drift jobs
+	var jobList batchv1.JobList
+	if err := r.List(ctx, &jobList, client.InNamespace(project.Namespace), client.MatchingLabelsSelector{
+		Selector: labels.SelectorFromSet(map[string]string{
+			"tofu.example.com/project":  project.Name,
+			"tofu.example.com/job-type": "drift",
+		}),
+	}); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Check existing drift jobs
+	for i := range jobList.Items {
+		j := &jobList.Items[i]
+		if j.Status.Succeeded > 0 {
+			// Read logs to check for drift
+			output, err := r.readJobLogs(ctx, j)
+			if err != nil {
+				log.Error(err, "failed to read drift job logs")
+			} else {
+				summary := extractPlanSummary(output)
+				now := metav1.Now()
+				project.Status.LastDriftCheckTime = &now
+				if summary == "No changes." || summary == "" {
+					project.Status.DriftDetected = false
+					project.Status.Phase = "Succeeded"
+					project.Status.Message = ""
+					log.Info("drift check: no drift detected")
+				} else {
+					project.Status.DriftDetected = true
+					project.Status.SyncStatus = "not in sync"
+					log.Info("drift check: drift detected", "summary", summary)
+					sendNotification(ctx, project, "drift:detected")
+				}
+				r.updateStatusWithCondition(ctx, project)
+			}
+			// Clean up completed drift job
+			_ = r.Delete(ctx, j, client.PropagationPolicy(metav1.DeletePropagationBackground))
+			if project.Status.DriftDetected && project.Spec.KeepInSync {
+				// Force re-apply by clearing last applied hash
+				project.Status.LastAppliedHash = ""
+				r.updateStatusWithCondition(ctx, project)
+				return ctrl.Result{Requeue: true}, nil
+			}
+			return ctrl.Result{RequeueAfter: interval}, nil
+		}
+		if j.Status.Failed > 0 {
+			log.Error(nil, "drift check job failed", "job", j.Name)
+			now := metav1.Now()
+			project.Status.LastDriftCheckTime = &now
+			r.updateStatusWithCondition(ctx, project)
+			_ = r.Delete(ctx, j, client.PropagationPolicy(metav1.DeletePropagationBackground))
+			return ctrl.Result{RequeueAfter: interval}, nil
+		}
+		// Job still running — wait
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// No drift job exists — create one
+	log.Info("creating drift detection plan job", "name", driftJobName)
+	newJob := buildPlanJob(*project, driftJobName, cmName, image, program, saName)
+	newJob.Labels["tofu.example.com/job-type"] = "drift"
+	if cacheEnabled {
+		addCacheToJob(newJob, cachePVCName)
+	}
+	addEnvToJob(newJob, project)
+	if err := addResourcesToJob(newJob, project); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.Create(ctx, newJob); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	project.Status.Phase = "DriftChecking"
+	project.Status.Message = "Running drift detection"
+	r.updateStatusWithCondition(ctx, project)
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// parseDriftInterval parses a drift detection interval string. Default 15m.
+func parseDriftInterval(s string) time.Duration {
+	if s == "" {
+		return 15 * time.Minute
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 15 * time.Minute
+	}
+	return d
+}
+
 // applyImmediately returns the effective value of spec.applyImmediately (default true).
 func applyImmediately(project *tofuv1alpha1.TofuProject) bool {
 	if project.Spec.ApplyImmediately == nil {
@@ -1675,10 +1961,13 @@ func updateReadyCondition(project *tofuv1alpha1.TofuProject) {
 	var reason, message string
 
 	switch project.Status.Phase {
-	case "Succeeded":
+	case "Succeeded", "DriftChecking":
 		status = metav1.ConditionTrue
 		reason = "Applied"
 		message = "Apply completed successfully"
+		if project.Status.Phase == "DriftChecking" {
+			message = "Running drift detection"
+		}
 	case "Error", "DestroyFailed":
 		status = metav1.ConditionFalse
 		reason = "Error"

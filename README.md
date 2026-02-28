@@ -24,6 +24,11 @@
 - Automatic destroy via finalizer
 - Leader election for HA deployments
 - Job locking — one Job per project at a time
+- Custom environment variables — inject env vars and envFrom into tofu Jobs
+- Resource limits — set CPU/memory requests and limits on Job containers
+- Retry policy — automatically retry failed Jobs with configurable delay
+- Drift detection — periodic plan-only jobs to detect infrastructure drift
+- Webhook notifications — send HTTP POST notifications on lifecycle events
 
 ## Quick Start
 
@@ -100,6 +105,11 @@ spec:
 | [Provider Plugin Cache](doc/provider-cache.md) | Cache providers via PVC to speed up `tofu init` |
 | [Delete Protection](doc/delete-protection.md) | Prevent accidental infrastructure destruction |
 | [kubectl Plugin](doc/kubectl-plugin.md) | CLI for plan, approve, delete, suspend, resume |
+| [Environment Variables](doc/env-vars.md) | Inject env vars and envFrom into tofu Jobs |
+| [Resource Limits](doc/resource-limits.md) | Set CPU/memory requests and limits on Job containers |
+| [Retry Policy](doc/retry-policy.md) | Automatically retry failed Jobs with configurable delay |
+| [Drift Detection](doc/drift-detection.md) | Periodic plan-only jobs to detect infrastructure drift |
+| [Webhook Notifications](doc/webhooks.md) | HTTP POST notifications on lifecycle events |
 | [Examples](doc/examples.md) | AWS S3 bucket example and more |
 
 ## Build & Test
