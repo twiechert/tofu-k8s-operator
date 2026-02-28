@@ -1,0 +1,52 @@
+# Example: map individual ConfigMap/Secret keys to named params
+#
+# Use paramBindings when you only need specific keys, not the entire
+# ConfigMap/Secret. The param name can differ from the source key.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-settings
+  namespace: default
+data:
+  database_host: "db.example.com"
+  database_port: "5432"
+  log_level: "info"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-keys
+  namespace: default
+stringData:
+  stripe_key: "sk_live_abc123"
+  sendgrid_key: "SG.xyz789"
+---
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: parambindings-example
+  namespace: default
+spec:
+  programRef:
+    name: hello
+  paramBindings:
+    # Map ConfigMap key "database_host" → param "db_host"
+    - name: db_host
+      configMapKeyRef:
+        name: app-settings
+        key: database_host
+    # Map ConfigMap key "database_port" → param "db_port"
+    - name: db_port
+      configMapKeyRef:
+        name: app-settings
+        key: database_port
+    # Map Secret key "stripe_key" → param "payment_api_key"
+    - name: payment_api_key
+      secretKeyRef:
+        name: api-keys
+        key: stripe_key
+  backend:
+    secretSuffix: "parambindings-example"
+    namespace: "default"
+  autoApprove: true
