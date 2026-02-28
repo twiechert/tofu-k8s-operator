@@ -1,3 +1,6 @@
+<p align="center">
+  <img src="logo.png" alt="tofu-k8s-operator" width="200"/>
+</p>
 
 # OpenTofu Kubernetes Operator
 
