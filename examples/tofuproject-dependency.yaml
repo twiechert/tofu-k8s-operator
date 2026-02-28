@@ -1,0 +1,62 @@
+# Example: Cross-Project Output Dependencies
+#
+# The "upstream" project creates a VPC and exposes its ID as an output.
+# The "downstream" project depends on upstream and receives the VPC ID
+# as an input parameter automatically.
+---
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: vpc
+  namespace: default
+spec:
+  programHCL: |
+    variable "cidr" { type = string }
+
+    resource "null_resource" "vpc" {
+      triggers = { cidr = var.cidr }
+    }
+
+    output "vpc_id" {
+      value = "vpc-12345"
+    }
+---
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: upstream
+  namespace: default
+spec:
+  programRef:
+    name: vpc
+  params:
+    cidr: "10.0.0.0/16"
+  autoApprove: true
+---
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: app
+  namespace: default
+spec:
+  programHCL: |
+    variable "vpc_id" { type = string }
+
+    resource "null_resource" "app" {
+      triggers = { vpc_id = var.vpc_id }
+    }
+---
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: downstream
+  namespace: default
+spec:
+  programRef:
+    name: app
+  autoApprove: true
+  dependencies:
+    - projectRef:
+        name: upstream
+      outputs:
+        vpc_id: vpc_id   # upstream output "vpc_id" → downstream param "vpc_id"

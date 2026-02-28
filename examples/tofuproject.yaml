@@ -1,0 +1,15 @@
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: hello-run
+  namespace: default
+spec:
+  programRef:
+    name: hello
+  params:
+    # example variables (your program must define variable blocks to use them)
+    environment: "dev"
+  backend:
+    secretSuffix: "hello-run"
+    namespace: "default"
+  autoApprove: true

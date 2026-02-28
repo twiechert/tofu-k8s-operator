@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tofu-operator
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: tofu-operator
+  template:
+    metadata:
+      labels:
+        app: tofu-operator
+    spec:
+      serviceAccountName: tofu-operator
+      containers:
+        - name: manager
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --metrics-bind-address={{ .Values.metricsBindAddress }}
+            - --health-probe-bind-address={{ .Values.healthProbeBindAddress }}
+            {{- if .Values.leaderElect }}
+            - --leader-elect
+            {{- end }}
+          ports:
+            - containerPort: 8080
+              name: metrics
+            - containerPort: 8081
+              name: health

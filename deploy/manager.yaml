@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tofu-operator
+  namespace: tofu-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tofu-operator
+  template:
+    metadata:
+      labels:
+        app: tofu-operator
+    spec:
+      serviceAccountName: tofu-operator
+      containers:
+        - name: manager
+          image: tofu-operator:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+          ports:
+            - containerPort: 8080
+              name: metrics
+            - containerPort: 8081
+              name: health

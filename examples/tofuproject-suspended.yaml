@@ -1,0 +1,15 @@
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: hello-run-suspended
+  namespace: default
+spec:
+  programRef:
+    name: hello
+  params:
+    environment: "dev"
+  backend:
+    secretSuffix: hello-run-suspended
+    namespace: default
+  autoApprove: true
+  suspend: true

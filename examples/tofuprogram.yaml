@@ -1,0 +1,18 @@
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: hello
+  namespace: default
+spec:
+  providers:
+    - name: random
+      source: "hashicorp/random"
+      version: "~> 3.6"
+  programHCL: |
+    resource "random_pet" "name" {
+      length = 2
+    }
+
+    output "pet" {
+      value = random_pet.name.id
+    }

@@ -1,0 +1,15 @@
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: hello-run-planapprove
+  namespace: default
+spec:
+  programRef:
+    name: hello
+  params:
+    environment: "staging"
+  backend:
+    secretSuffix: hello-run-planapprove
+    namespace: default
+  autoApprove: false
+  syncInterval: "10m"

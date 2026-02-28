@@ -1,0 +1,43 @@
+# Example: Provider Plugin Cache
+#
+# This project uses a shared PVC to cache OpenTofu provider plugins.
+# All projects in the namespace with mode "shared" share the same PVC
+# and their jobs are serialized to avoid concurrent writes.
+#
+# Modes:
+#   shared    - One PVC per namespace ("tofu-plugin-cache"), jobs serialized
+#   dedicated - One PVC per project ("{name}-plugin-cache"), per-project locking
+---
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: cached-program
+  namespace: default
+spec:
+  providers:
+    - name: aws
+      source: "hashicorp/aws"
+      version: "~> 5.0"
+      configHCL: |
+        region = var.aws_region
+  programHCL: |
+    variable "aws_region" { type = string }
+
+    resource "null_resource" "example" {
+      triggers = { region = var.aws_region }
+    }
+---
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: cached-project
+  namespace: default
+spec:
+  programRef:
+    name: cached-program
+  params:
+    aws_region: "eu-west-1"
+  autoApprove: true
+  cache:
+    mode: shared
+    size: "2Gi"
