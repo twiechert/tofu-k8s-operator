@@ -1,0 +1,68 @@
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: "Enable debug logging"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: e2e
+
+      - name: Build and load operator image
+        run: |
+          docker build -t tofu-k8s-operator:e2e .
+          kind load docker-image tofu-k8s-operator:e2e --name e2e
+
+      - name: Install CRDs
+        run: kubectl apply -f deploy/crds.yaml
+
+      - name: Deploy operator
+        run: |
+          helm install tofu-k8s-operator ./charts/tofu-k8s-operator \
+            --set image.repository=tofu-k8s-operator \
+            --set image.tag=e2e \
+            --set image.pullPolicy=Never \
+            --wait --timeout 60s
+
+      - name: Build kubectl plugin
+        run: go build -o kubectl-tofu ./cmd/kubectl-tofu/
+
+      - name: Run e2e tests
+        run: go test ./test/e2e/ -tags integration -v -timeout 25m
+        env:
+          KUBECONFIG: ${{ env.KUBECONFIG }}
+          PATH: ${{ github.workspace }}:${{ env.PATH }}
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Operator logs ==="
+          kubectl logs -l app.kubernetes.io/name=tofu-k8s-operator --tail=200 || true
+          echo "=== All pods ==="
+          kubectl get pods -A || true
+          echo "=== TofuProjects ==="
+          kubectl get tofuprojects -A -o yaml || true
+          echo "=== Jobs ==="
+          kubectl get jobs -A || true
