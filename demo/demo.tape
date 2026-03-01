@@ -133,7 +133,7 @@ Enter
 Sleep 2s
 
 # Enable drift detection with a short interval
-Type @"kubectl patch tofuproject demo --type=merge -p '{"spec":{"driftDetection":{"enabled":true,"interval":"30s"}}}'"
+Type `kubectl patch tofuproject demo --type=merge -p '{"spec":{"driftDetection":{"enabled":true,"interval":"30s"}}}'`
 Enter
 Sleep 3s
 
