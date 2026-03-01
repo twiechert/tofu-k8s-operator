@@ -98,15 +98,17 @@ spec:
 `
 
 func TestMain(m *testing.M) {
-	// Deploy operator once
-	if out, err := kubectlMayFail("apply", "-k", "../../deploy/"); err != nil {
-		fmt.Fprintf(os.Stderr, "deploy failed: %v\n%s", err, out)
-		os.Exit(1)
-	}
-	if out, err := kubectlMayFail("-n", "tofu-system", "wait", "--for=condition=Ready",
-		"pod", "-l", "app=tofu-k8s-operator", "--timeout=120s"); err != nil {
-		fmt.Fprintf(os.Stderr, "operator not ready: %v\n%s", err, out)
-		os.Exit(1)
+	// Deploy operator if not already running (CI deploys via Helm before running tests)
+	if !isOperatorRunning() {
+		if out, err := kubectlMayFail("apply", "-k", "../../deploy/"); err != nil {
+			fmt.Fprintf(os.Stderr, "deploy failed: %v\n%s", err, out)
+			os.Exit(1)
+		}
+		if out, err := kubectlMayFail("-n", "tofu-system", "wait", "--for=condition=Ready",
+			"pod", "-l", "app=tofu-k8s-operator", "--timeout=120s"); err != nil {
+			fmt.Fprintf(os.Stderr, "operator not ready: %v\n%s", err, out)
+			os.Exit(1)
+		}
 	}
 
 	// Create shared programs
@@ -132,6 +134,23 @@ func TestMain(m *testing.M) {
 		deleteYAMLDirect(y)
 	}
 	os.Exit(code)
+}
+
+func isOperatorRunning() bool {
+	// Check if operator pod is already running in any namespace (e.g. deployed via Helm in CI)
+	out, err := kubectlMayFail("get", "pods", "-A", "-l", "app.kubernetes.io/name=tofu-k8s-operator",
+		"--field-selector=status.phase=Running", "-o", "name")
+	if err == nil && strings.TrimSpace(out) != "" {
+		fmt.Fprintf(os.Stderr, "operator already running, skipping kustomize deploy\n")
+		return true
+	}
+	// Also check the kustomize label
+	out, err = kubectlMayFail("get", "pods", "-A", "-l", "app=tofu-k8s-operator",
+		"--field-selector=status.phase=Running", "-o", "name")
+	if err == nil && strings.TrimSpace(out) != "" {
+		return true
+	}
+	return false
 }
 
 func applyYAMLDirect(yaml string) error {
