@@ -33,9 +33,6 @@ jobs:
           docker build -t tofu-k8s-operator:e2e .
           kind load docker-image tofu-k8s-operator:e2e --name e2e
 
-      - name: Install CRDs
-        run: kubectl apply -f deploy/crds.yaml
-
       - name: Deploy operator
         run: |
           helm install tofu-k8s-operator ./charts/tofu-k8s-operator \

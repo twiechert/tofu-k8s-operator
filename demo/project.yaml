@@ -1,0 +1,11 @@
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: demo
+  namespace: default
+spec:
+  programRef:
+    name: demo-program
+  autoApprove: false
+  params:
+    prefix: "k8s"
