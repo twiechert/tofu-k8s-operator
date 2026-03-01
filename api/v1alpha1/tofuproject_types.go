@@ -117,6 +117,13 @@ type CustomValidationStep struct {
 	Image   string `json:"image,omitempty"`
 }
 
+type BlastRadiusSummary struct {
+	Add     int32 `json:"add"`
+	Change  int32 `json:"change"`
+	Destroy int32 `json:"destroy"`
+	Total   int32 `json:"total"`
+}
+
 type TofuProjectSpec struct {
 	ProgramRef ObjectRef `json:"programRef"`
 
@@ -143,6 +150,11 @@ type TofuProjectSpec struct {
 
 	// autoApprove passes -auto-approve to apply
 	AutoApprove bool `json:"autoApprove,omitempty"`
+
+	// autoApproveMaxBlastRadius auto-approves plans when the total affected resources
+	// (add + change + destroy) is at or below this threshold. Only meaningful when autoApprove is false.
+	// nil = manual approval always required; 0 = auto-approve only "No changes" plans.
+	AutoApproveMaxBlastRadius *int32 `json:"autoApproveMaxBlastRadius,omitempty"`
 
 	// applyImmediately controls whether the resource reports Ready only after apply completes.
 	// Default: true — the Ready condition stays False until the apply succeeds or errors,
@@ -226,6 +238,7 @@ type TofuProjectStatus struct {
 	RetryCount         int32               `json:"retryCount,omitempty"`
 	LastDriftCheckTime *metav1.Time        `json:"lastDriftCheckTime,omitempty"`
 	DriftDetected      bool                `json:"driftDetected,omitempty"`
+	BlastRadius        *BlastRadiusSummary `json:"blastRadius,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -314,6 +327,10 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 	if in.Spec.ApplyImmediately != nil {
 		val := *in.Spec.ApplyImmediately
 		out.Spec.ApplyImmediately = &val
+	}
+	if in.Spec.AutoApproveMaxBlastRadius != nil {
+		val := *in.Spec.AutoApproveMaxBlastRadius
+		out.Spec.AutoApproveMaxBlastRadius = &val
 	}
 	if in.Spec.ServiceAccount != nil {
 		saCopy := *in.Spec.ServiceAccount
@@ -422,6 +439,10 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 		for k, v := range in.Status.Outputs {
 			out.Status.Outputs[k] = v
 		}
+	}
+	if in.Status.BlastRadius != nil {
+		brCopy := *in.Status.BlastRadius
+		out.Status.BlastRadius = &brCopy
 	}
 	if in.Status.Conditions != nil {
 		out.Status.Conditions = make([]metav1.Condition, len(in.Status.Conditions))

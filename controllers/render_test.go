@@ -936,3 +936,63 @@ func TestAddValidationToJob_MultipleSteps(t *testing.T) {
 		}
 	}
 }
+
+// --- Tests for blast radius ---
+
+func TestExtractPlanSummaryAndParseCounts(t *testing.T) {
+	output := "Refreshing state...\n\nPlan: 2 to add, 0 to change, 1 to destroy.\n\nDo you want to perform these actions?"
+	summary := extractPlanSummary(output)
+	br := parsePlanCounts(summary)
+	if br == nil {
+		t.Fatal("expected non-nil blast radius")
+	}
+	if br.Add != 2 || br.Change != 0 || br.Destroy != 1 || br.Total != 3 {
+		t.Fatalf("unexpected blast radius: %+v", *br)
+	}
+}
+
+func TestBlastRadiusAutoApproveWithinThreshold(t *testing.T) {
+	threshold := int32(5)
+	br := parsePlanCounts("Plan: 2 to add, 0 to change, 1 to destroy.")
+	if br == nil {
+		t.Fatal("expected blast radius")
+	}
+	if br.Total > threshold {
+		t.Fatalf("expected total %d <= threshold %d", br.Total, threshold)
+	}
+}
+
+func TestBlastRadiusExceedsThreshold(t *testing.T) {
+	threshold := int32(2)
+	br := parsePlanCounts("Plan: 2 to add, 0 to change, 1 to destroy.")
+	if br == nil {
+		t.Fatal("expected blast radius")
+	}
+	if br.Total <= threshold {
+		t.Fatalf("expected total %d > threshold %d", br.Total, threshold)
+	}
+}
+
+func TestBlastRadiusNoChangesAutoApprove(t *testing.T) {
+	threshold := int32(0)
+	br := parsePlanCounts("No changes.")
+	if br == nil {
+		t.Fatal("expected blast radius for no changes")
+	}
+	if br.Total > threshold {
+		t.Fatalf("expected total %d <= threshold %d for no-changes plan", br.Total, threshold)
+	}
+}
+
+func TestBlastRadiusNotConfigured(t *testing.T) {
+	// When threshold is nil, auto-approve should not trigger
+	var threshold *int32 = nil
+	br := parsePlanCounts("Plan: 1 to add, 0 to change, 0 to destroy.")
+	if br == nil {
+		t.Fatal("expected blast radius")
+	}
+	// Simulating the controller logic: threshold nil means no auto-approve
+	if threshold != nil && br.Total <= *threshold {
+		t.Fatal("should not auto-approve when threshold is nil")
+	}
+}

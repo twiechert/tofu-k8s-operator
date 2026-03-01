@@ -18,6 +18,7 @@ just install-plugin
 |---------|-------------|
 | `kubectl tofu plan <project> [-n ns]` | Show plan output and status |
 | `kubectl tofu approve <project> [-n ns]` | Approve a pending plan |
+| `kubectl tofu logs <project> [--plan] [-n ns]` | Show logs of the latest job (use `--plan` for plan job) |
 | `kubectl tofu suspend <project> [-n ns]` | Pause reconciliation |
 | `kubectl tofu resume <project> [-n ns]` | Resume reconciliation |
 | `kubectl tofu history <project> [-n ns]` | Show revision history |

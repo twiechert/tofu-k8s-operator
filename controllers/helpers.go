@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -146,6 +148,32 @@ func extractPlanSummary(output string) string {
 		}
 	}
 	return ""
+}
+
+var planCountsRe = regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`)
+
+// parsePlanCounts parses the plan summary line into structured blast radius counts.
+// Returns {0,0,0,0} for "No changes." summaries, nil if the summary can't be parsed.
+func parsePlanCounts(summary string) *tofuv1alpha1.BlastRadiusSummary {
+	if summary == "" {
+		return nil
+	}
+	if summary == "No changes." {
+		return &tofuv1alpha1.BlastRadiusSummary{}
+	}
+	m := planCountsRe.FindStringSubmatch(summary)
+	if m == nil {
+		return nil
+	}
+	add, _ := strconv.Atoi(m[1])
+	change, _ := strconv.Atoi(m[2])
+	destroy, _ := strconv.Atoi(m[3])
+	return &tofuv1alpha1.BlastRadiusSummary{
+		Add:     int32(add),
+		Change:  int32(change),
+		Destroy: int32(destroy),
+		Total:   int32(add + change + destroy),
+	}
 }
 
 // parseOutputsFromLogs extracts tofu output values from job logs.

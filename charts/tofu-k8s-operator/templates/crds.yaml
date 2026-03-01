@@ -127,6 +127,10 @@ spec:
                 workspace: {type: string}
                 image: {type: string}
                 autoApprove: {type: boolean}
+                autoApproveMaxBlastRadius:
+                  type: integer
+                  format: int32
+                  description: "Auto-approve plans when total affected resources (add+change+destroy) is at or below this threshold. Only meaningful when autoApprove is false. nil = manual approval always required; 0 = auto-approve only 'No changes' plans."
                 applyImmediately:
                   type: boolean
                   description: "When true (default), the Ready condition stays False until apply succeeds or errors. Set to false for async execution (e.g. ArgoCD)."
@@ -340,6 +344,14 @@ spec:
                 retryCount: {type: integer, format: int32}
                 lastDriftCheckTime: {type: string, format: date-time}
                 driftDetected: {type: boolean}
+                blastRadius:
+                  type: object
+                  description: "Parsed blast radius from the latest plan summary"
+                  properties:
+                    add: {type: integer, format: int32}
+                    change: {type: integer, format: int32}
+                    destroy: {type: integer, format: int32}
+                    total: {type: integer, format: int32}
                 conditions:
                   type: array
                   items:

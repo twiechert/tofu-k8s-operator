@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -68,6 +70,11 @@ func main() {
 		requireArgs(2, "unpin <project> [-n namespace]")
 		name, ns := parseNameAndNamespace(2)
 		cmdUnpin(name, ns)
+	case "logs":
+		requireArgs(2, "logs <project> [--plan] [-n namespace]")
+		name, ns := parseNameAndNamespace(2)
+		showPlan := hasFlag("--plan")
+		cmdLogs(name, ns, showPlan)
 	case "show":
 		requireArgs(3, "show <project> <revision> [-n namespace]")
 		name := os.Args[2]
@@ -87,6 +94,7 @@ func usage() {
 Commands:
   plan      Show plan output and status
   approve   Approve a pending plan for apply
+  logs      Show logs of the latest job (--plan for plan job)
   delete    Approve deletion of a delete-protected project
   suspend   Pause reconciliation
   resume    Resume reconciliation
@@ -163,6 +171,13 @@ func cmdPlan(name, ns string) {
 	}
 	if planSummary != "" {
 		fmt.Printf("Summary:  %s\n", planSummary)
+	}
+	if br, ok := status["blastRadius"].(map[string]interface{}); ok {
+		add, _ := br["add"].(float64)
+		change, _ := br["change"].(float64)
+		destroy, _ := br["destroy"].(float64)
+		total, _ := br["total"].(float64)
+		fmt.Printf("Blast Radius: %.0f to add, %.0f to change, %.0f to destroy (total: %.0f)\n", add, change, destroy, total)
 	}
 	if planOutput != "" {
 		fmt.Printf("\n--- Plan Output ---\n%s\n", planOutput)
@@ -360,6 +375,78 @@ func cmdShow(name, ns, revStr string) {
 	if cm.Data["planOutput"] != "" {
 		fmt.Printf("\n--- Plan/Apply Output ---\n%s\n", cm.Data["planOutput"])
 	}
+}
+
+func cmdLogs(name, ns string, showPlan bool) {
+	dynClient := newDynamicClient()
+	ctx := context.Background()
+
+	obj, err := dynClient.Resource(tofuProjectGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting TofuProject %s/%s: %v\n", ns, name, err)
+		os.Exit(1)
+	}
+
+	status, _, _ := unstructured.NestedMap(obj.Object, "status")
+
+	var jobName string
+	if showPlan {
+		jobName, _ = status["lastPlanJobName"].(string)
+		if jobName == "" {
+			fmt.Fprintf(os.Stderr, "No plan job found for %s/%s\n", ns, name)
+			os.Exit(1)
+		}
+	} else {
+		jobName, _ = status["lastJobName"].(string)
+		if jobName == "" {
+			fmt.Fprintf(os.Stderr, "No job found for %s/%s\n", ns, name)
+			os.Exit(1)
+		}
+	}
+
+	phase, _ := status["phase"].(string)
+	fmt.Printf("Project: %s/%s\n", ns, name)
+	fmt.Printf("Phase:   %s\n", phase)
+	fmt.Printf("Job:     %s\n\n", jobName)
+
+	clientset := newKubernetesClient()
+
+	pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing pods for job %s: %v\n", jobName, err)
+		os.Exit(1)
+	}
+	if len(pods.Items) == 0 {
+		fmt.Fprintf(os.Stderr, "No pods found for job %s\n", jobName)
+		os.Exit(1)
+	}
+
+	podName := pods.Items[0].Name
+	req := clientset.CoreV1().Pods(ns).GetLogs(podName, &corev1.PodLogOptions{
+		Container: "tofu",
+	})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error streaming logs from pod %s: %v\n", podName, err)
+		os.Exit(1)
+	}
+	defer stream.Close()
+
+	if _, err := io.Copy(os.Stdout, stream); err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading logs: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func hasFlag(flag string) bool {
+	for _, arg := range os.Args {
+		if arg == flag {
+			return true
+		}
+	}
+	return false
 }
 
 func parseNamespaceOnly(startIdx int) string {

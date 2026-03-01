@@ -480,6 +480,7 @@ func (r *TofuProjectReconciler) reconcilePlanApprove(ctx context.Context, projec
 		project.Status.PendingPlanHash = ""
 		project.Status.PlanOutput = ""
 		project.Status.PlanSummary = ""
+		project.Status.BlastRadius = nil
 		project.Status.LastPlanJobName = ""
 		// Clear stale approval annotation
 		if ann := project.GetAnnotations(); ann != nil {
@@ -560,6 +561,7 @@ func (r *TofuProjectReconciler) ensurePlanJob(ctx context.Context, project *tofu
 
 // handlePlanJobStatus processes the result of a completed plan job.
 func (r *TofuProjectReconciler) handlePlanJobStatus(ctx context.Context, project *tofuv1alpha1.TofuProject, planJob *batchv1.Job, appliedHash string) (ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
 	if planJob.Status.Succeeded > 0 {
 		// Plan succeeded — read logs and transition to WaitingApproval
 		output, err := r.readJobLogs(ctx, planJob)
@@ -571,11 +573,39 @@ func (r *TofuProjectReconciler) handlePlanJobStatus(ctx context.Context, project
 			output = output[len(output)-maxPlanOutputBytes:]
 		}
 
-		project.Status.Phase = "WaitingApproval"
+		planSummary := extractPlanSummary(output)
+		blastRadius := parsePlanCounts(planSummary)
+
 		project.Status.PendingPlanHash = appliedHash
 		project.Status.PlanOutput = output
-		project.Status.PlanSummary = extractPlanSummary(output)
+		project.Status.PlanSummary = planSummary
+		project.Status.BlastRadius = blastRadius
 		project.Status.LastPlanJobName = planJob.Name
+
+		// Check if blast radius is within auto-approve threshold
+		if !project.Spec.AutoApprove && project.Spec.AutoApproveMaxBlastRadius != nil && blastRadius != nil {
+			threshold := *project.Spec.AutoApproveMaxBlastRadius
+			if blastRadius.Total <= threshold {
+				log.Info("auto-approving plan within blast radius threshold",
+					"total", blastRadius.Total, "threshold", threshold)
+				ann := project.GetAnnotations()
+				if ann == nil {
+					ann = map[string]string{}
+				}
+				ann[approvedHashAnnotation] = appliedHash
+				project.SetAnnotations(ann)
+				if err := r.Update(ctx, project); err != nil {
+					return ctrl.Result{}, err
+				}
+				project.Status.Phase = "WaitingApproval"
+				project.Status.Message = fmt.Sprintf("Plan auto-approved (blast radius %d <= threshold %d)", blastRadius.Total, threshold)
+				r.updateStatusWithCondition(ctx, project)
+				sendNotification(ctx, project, "plan:auto-approved")
+				return ctrl.Result{Requeue: true}, nil
+			}
+		}
+
+		project.Status.Phase = "WaitingApproval"
 		project.Status.Message = "Plan complete. Approve to apply."
 		r.updateStatusWithCondition(ctx, project)
 		sendNotification(ctx, project, "plan:complete")
@@ -669,6 +699,7 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		project.Status.PendingPlanHash = ""
 		project.Status.PlanOutput = ""
 		project.Status.PlanSummary = ""
+		project.Status.BlastRadius = nil
 		if outputs != nil {
 			project.Status.Outputs = outputs
 		}

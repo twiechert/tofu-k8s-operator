@@ -23,7 +23,8 @@ TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
         │                                │
         └──────────┬─────────────────────┘
                    ▼
-         Operator renders .tf files into a ConfigMap
+         Operator renders generated files (backend, vars, providers) into a ConfigMap
+         Git sources are cloned at runtime via init container — not stored in the ConfigMap
                    ▼
          Kubernetes Job runs `tofu plan` / `tofu apply`
                    ▼
@@ -60,6 +61,7 @@ TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
 - Webhook notifications — send HTTP POST notifications on lifecycle events
 - [Validation chain](doc/validation.md) — `tofu validate` + standard tools (tflint, checkov, trivy) or custom commands as init containers
 - [Ignore providers & additional providers HCL](doc/ignore-providers.md) — strip source provider/backend blocks, inject custom provider config
+- [Blast radius tracking](doc/blast-radius.md) — parsed plan counts with conditional auto-approve by threshold
 - [Revision history & pinned revisions](doc/revisions.md) — audit trail of every apply, rollback to any stored revision
 
 ## Quick Start
@@ -202,7 +204,7 @@ spec:
 | [Cross-Project Dependencies](doc/dependencies.md) | Consume outputs from upstream projects as input params |
 | [Provider Plugin Cache](doc/provider-cache.md) | Cache providers via PVC to speed up `tofu init` |
 | [Delete Protection](doc/delete-protection.md) | Prevent accidental infrastructure destruction |
-| [kubectl Plugin](doc/kubectl-plugin.md) | CLI for plan, approve, delete, suspend, resume |
+| [kubectl Plugin](doc/kubectl-plugin.md) | CLI for plan, approve, logs, delete, suspend, resume |
 | [Environment Variables](doc/env-vars.md) | Inject env vars and envFrom into tofu Jobs |
 | [Extra Volumes](doc/extra-volumes.md) | Mount ConfigMaps, Secrets, PVCs, or image volumes into tofu Jobs |
 | [Resource Limits](doc/resource-limits.md) | Set CPU/memory requests and limits on Job containers |
@@ -211,6 +213,7 @@ spec:
 | [Webhook Notifications](doc/webhooks.md) | HTTP POST notifications on lifecycle events |
 | [Validation](doc/validation.md) | Pre-apply validation chain: `tofu validate` + standard tools or custom commands |
 | [Ignore Providers](doc/ignore-providers.md) | Strip source provider/backend blocks, inject custom provider config |
+| [Blast Radius](doc/blast-radius.md) | Blast radius tracking and conditional auto-approve by threshold |
 | [Revision History](doc/revisions.md) | Audit trail of every apply, rollback to any stored revision |
 | [Examples](doc/examples.md) | AWS S3 bucket example and more |
 

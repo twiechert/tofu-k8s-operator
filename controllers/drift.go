@@ -55,8 +55,10 @@ func (r *TofuProjectReconciler) reconcileDriftDetection(ctx context.Context, pro
 				log.Error(err, "failed to read drift job logs")
 			} else {
 				summary := extractPlanSummary(output)
+				blastRadius := parsePlanCounts(summary)
 				now := metav1.Now()
 				project.Status.LastDriftCheckTime = &now
+				project.Status.BlastRadius = blastRadius
 				if summary == "No changes." || summary == "" {
 					project.Status.DriftDetected = false
 					project.Status.Phase = "Succeeded"
