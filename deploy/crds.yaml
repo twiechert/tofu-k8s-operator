@@ -260,6 +260,12 @@ spec:
                           events:
                             type: array
                             items: {type: string}
+                ignoreProviders:
+                  type: boolean
+                  description: "Strip all provider blocks from source .tf files"
+                additionalProvidersHCL:
+                  type: string
+                  description: "Raw HCL for additional provider configuration, written as additional-providers.tf"
             status:
               type: object
               properties:

@@ -148,6 +148,12 @@ type TofuProjectSpec struct {
 
 	// notifications configures webhook notifications for lifecycle events.
 	Notifications *NotificationSpec `json:"notifications,omitempty"`
+
+	// ignoreProviders strips all provider blocks from source .tf files.
+	IgnoreProviders bool `json:"ignoreProviders,omitempty"`
+
+	// additionalProvidersHCL is raw HCL written as additional-providers.tf for custom provider config.
+	AdditionalProvidersHCL string `json:"additionalProvidersHCL,omitempty"`
 }
 
 type TofuProjectStatus struct {

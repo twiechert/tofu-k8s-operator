@@ -14,6 +14,7 @@ import (
 // Set TOFU_E2E_GIT_REF to the branch/tag to use (defaults to "main").
 // The test uses the program at test/e2e/testdata/simple-program within the repo.
 func TestGitSourceProgram(t *testing.T) {
+	t.Parallel()
 	gitURL := os.Getenv("TOFU_E2E_GIT_URL")
 	if gitURL == "" {
 		t.Skip("TOFU_E2E_GIT_URL not set, skipping git source test")
@@ -23,7 +24,6 @@ func TestGitSourceProgram(t *testing.T) {
 		gitRef = "main"
 	}
 
-	deployOperator(t)
 	dynClient := newDynamicClient(t)
 
 	gitProgram := `

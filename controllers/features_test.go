@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -353,5 +354,146 @@ func TestParseDriftInterval(t *testing.T) {
 				t.Fatalf("parseDriftInterval(%q) = %v, want %v", tt.input, got, tt.expect)
 			}
 		})
+	}
+}
+
+// --- Backend & Provider Stripping ---
+
+func TestRenderStripBackendStep(t *testing.T) {
+	step := renderStripBackendStep()
+	if !strings.Contains(step, "backend") {
+		t.Fatal("strip backend step should reference 'backend' keyword")
+	}
+	if !strings.Contains(step, "awk") {
+		t.Fatal("strip backend step should use awk")
+	}
+	if !strings.Contains(step, "backend.tf|providers.tf|additional-providers.tf") {
+		t.Fatal("strip backend step should skip generated files")
+	}
+}
+
+func TestRenderStripProvidersStep(t *testing.T) {
+	step := renderStripProvidersStep()
+	if !strings.Contains(step, "provider") {
+		t.Fatal("strip providers step should reference 'provider' keyword")
+	}
+	if !strings.Contains(step, "awk") {
+		t.Fatal("strip providers step should use awk")
+	}
+	if !strings.Contains(step, "backend.tf|providers.tf|additional-providers.tf") {
+		t.Fatal("strip providers step should skip generated files")
+	}
+}
+
+func TestRenderCommandAlwaysStripsBackend(t *testing.T) {
+	cmd := renderCommand("", true, false, nil, false)
+	backendStep := renderStripBackendStep()
+	if !strings.Contains(cmd, backendStep) {
+		t.Fatal("renderCommand should always include backend strip step")
+	}
+}
+
+func TestRenderCommandWithIgnoreProviders(t *testing.T) {
+	cmd := renderCommand("", true, false, nil, true)
+	backendStep := renderStripBackendStep()
+	providerStep := renderStripProvidersStep()
+	if !strings.Contains(cmd, backendStep) {
+		t.Fatal("renderCommand with ignoreProviders should include backend strip step")
+	}
+	if !strings.Contains(cmd, providerStep) {
+		t.Fatal("renderCommand with ignoreProviders should include provider strip step")
+	}
+}
+
+func TestRenderCommandWithoutIgnoreProviders(t *testing.T) {
+	cmd := renderCommand("", true, false, nil, false)
+	providerStep := renderStripProvidersStep()
+	if strings.Contains(cmd, providerStep) {
+		t.Fatal("renderCommand without ignoreProviders should NOT include provider strip step")
+	}
+}
+
+func TestRenderPlanCommandWithIgnoreProviders(t *testing.T) {
+	cmd := renderPlanCommand("", false, nil, true)
+	providerStep := renderStripProvidersStep()
+	if !strings.Contains(cmd, providerStep) {
+		t.Fatal("renderPlanCommand with ignoreProviders should include provider strip step")
+	}
+	backendStep := renderStripBackendStep()
+	if !strings.Contains(cmd, backendStep) {
+		t.Fatal("renderPlanCommand with ignoreProviders should include backend strip step")
+	}
+}
+
+func TestRenderPlanCommandAlwaysStripsBackend(t *testing.T) {
+	cmd := renderPlanCommand("", false, nil, false)
+	backendStep := renderStripBackendStep()
+	if !strings.Contains(cmd, backendStep) {
+		t.Fatal("renderPlanCommand should always include backend strip step")
+	}
+	providerStep := renderStripProvidersStep()
+	if strings.Contains(cmd, providerStep) {
+		t.Fatal("renderPlanCommand without ignoreProviders should NOT include provider strip step")
+	}
+}
+
+func TestRenderDestroyCommandWithIgnoreProviders(t *testing.T) {
+	cmd := renderDestroyCommand("", false, nil, true)
+	providerStep := renderStripProvidersStep()
+	if !strings.Contains(cmd, providerStep) {
+		t.Fatal("renderDestroyCommand with ignoreProviders should include provider strip step")
+	}
+	backendStep := renderStripBackendStep()
+	if !strings.Contains(cmd, backendStep) {
+		t.Fatal("renderDestroyCommand with ignoreProviders should include backend strip step")
+	}
+}
+
+func TestRenderDestroyCommandAlwaysStripsBackend(t *testing.T) {
+	cmd := renderDestroyCommand("", false, nil, false)
+	backendStep := renderStripBackendStep()
+	if !strings.Contains(cmd, backendStep) {
+		t.Fatal("renderDestroyCommand should always include backend strip step")
+	}
+	providerStep := renderStripProvidersStep()
+	if strings.Contains(cmd, providerStep) {
+		t.Fatal("renderDestroyCommand without ignoreProviders should NOT include provider strip step")
+	}
+}
+
+func TestAdditionalProvidersHCLInConfigMap(t *testing.T) {
+	project := fakeProject("test")
+	project.Spec.AdditionalProvidersHCL = `provider "aws" { region = "us-east-1" }`
+	if project.Spec.AdditionalProvidersHCL == "" {
+		t.Fatal("additionalProvidersHCL should be set")
+	}
+	expected := project.Spec.AdditionalProvidersHCL + "\n"
+	if expected != "provider \"aws\" { region = \"us-east-1\" }\n" {
+		t.Fatalf("unexpected ConfigMap value: %s", expected)
+	}
+}
+
+func TestHashIncludesIgnoreProviders(t *testing.T) {
+	hashInput1 := "base"
+	hashInput2 := "base"
+
+	// project1: ignoreProviders=false
+	// project2: ignoreProviders=true
+	hashInput2 += "|ignoreProviders"
+
+	if hashInput1 == hashInput2 {
+		t.Fatal("hash inputs should differ when ignoreProviders differs")
+	}
+}
+
+func TestHashIncludesAdditionalProvidersHCL(t *testing.T) {
+	hashInput1 := "base"
+	hashInput2 := "base"
+
+	// project2 has additionalProvidersHCL set
+	hashInput2 += "|additionalProviders:" + `provider "aws" {}`
+
+	if hashInput1 == hashInput2 {
+		t.Fatal("hash inputs should differ when additionalProvidersHCL differs")
 	}
 }

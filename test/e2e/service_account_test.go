@@ -12,12 +12,9 @@ import (
 )
 
 func TestCustomServiceAccountAnnotations(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
 	clientset := newClientset(t)
-
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	project := `
 apiVersion: tofu.example.com/v1alpha1
@@ -53,12 +50,9 @@ spec:
 }
 
 func TestCustomServiceAccountName(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
 	clientset := newClientset(t)
-
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	// Pre-create a custom SA
 	customSA := `

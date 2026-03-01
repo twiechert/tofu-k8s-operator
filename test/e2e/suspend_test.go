@@ -13,12 +13,8 @@ import (
 )
 
 func TestSuspendMode(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	// Apply the program
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	// Create a suspended project
 	suspendedProject := `
@@ -64,11 +60,8 @@ spec:
 }
 
 func TestSuspendReadyCondition(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	project := `
 apiVersion: tofu.example.com/v1alpha1

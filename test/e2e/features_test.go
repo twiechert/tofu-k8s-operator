@@ -14,31 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-const featuresProgramYAML = `
-apiVersion: tofu.example.com/v1alpha1
-kind: TofuProgram
-metadata:
-  name: features-test
-  namespace: default
-spec:
-  providers:
-    - name: random
-      source: "hashicorp/random"
-      version: "~> 3.6"
-  programHCL: |
-    resource "random_pet" "name" {
-      length = 2
-    }
-    output "pet_name" {
-      value = random_pet.name.id
-    }
-`
-
 func TestEnvVars(t *testing.T) {
-	deployOperator(t)
-	defer deleteYAML(t, featuresProgramYAML)
-
-	applyYAML(t, featuresProgramYAML)
+	t.Parallel()
 
 	projectYAML := `
 apiVersion: tofu.example.com/v1alpha1
@@ -64,10 +41,7 @@ spec:
 }
 
 func TestResourceLimits(t *testing.T) {
-	deployOperator(t)
-	defer deleteYAML(t, featuresProgramYAML)
-
-	applyYAML(t, featuresProgramYAML)
+	t.Parallel()
 
 	projectYAML := `
 apiVersion: tofu.example.com/v1alpha1
@@ -129,7 +103,7 @@ spec:
 }
 
 func TestRetryPolicy(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 
 	// Use a program that will initially fail (bad provider config)
 	failProgramYAML := `
@@ -170,10 +144,7 @@ spec:
 }
 
 func TestDriftDetection(t *testing.T) {
-	deployOperator(t)
-	defer deleteYAML(t, featuresProgramYAML)
-
-	applyYAML(t, featuresProgramYAML)
+	t.Parallel()
 
 	projectYAML := `
 apiVersion: tofu.example.com/v1alpha1
@@ -208,7 +179,7 @@ spec:
 			t.Log("drift detection job created successfully")
 			break
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 	}
 
 	// Verify status has lastDriftCheckTime set (may take a bit after drift job completes)
@@ -225,16 +196,12 @@ spec:
 				return
 			}
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 	}
 }
 
 func TestWebhookNotifications(t *testing.T) {
-	// This test just verifies the project with notifications config can succeed
-	deployOperator(t)
-	defer deleteYAML(t, featuresProgramYAML)
-
-	applyYAML(t, featuresProgramYAML)
+	t.Parallel()
 
 	// Use a non-routable URL to verify it doesn't block reconciliation
 	projectYAML := fmt.Sprintf(`
@@ -258,4 +225,150 @@ spec:
 	dynClient := newDynamicClient(t)
 	// Even though webhook URL is unreachable, the project should still succeed
 	waitForPhase(t, dynClient, "default", "notify-test", "Succeeded", 120*time.Second)
+}
+
+func TestIgnoreProviders(t *testing.T) {
+	t.Parallel()
+
+	// Program with an inline provider block that would conflict — ignoreProviders strips it
+	programYAML := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: ignore-prov-prog
+  namespace: default
+spec:
+  providers:
+    - name: random
+      source: "hashicorp/random"
+      version: "~> 3.6"
+  programHCL: |
+    provider "random" {
+      # This inline provider block should be stripped by ignoreProviders
+    }
+    resource "random_pet" "name" {
+      length = 2
+    }
+    output "pet_name" {
+      value = random_pet.name.id
+    }
+`
+	defer deleteYAML(t, programYAML)
+	applyYAML(t, programYAML)
+
+	projectYAML := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: ignore-prov-test
+  namespace: default
+spec:
+  programRef:
+    name: ignore-prov-prog
+  autoApprove: true
+  ignoreProviders: true
+`
+	defer deleteYAML(t, projectYAML)
+	applyYAML(t, projectYAML)
+
+	dynClient := newDynamicClient(t)
+	waitForPhase(t, dynClient, "default", "ignore-prov-test", "Succeeded", 120*time.Second)
+}
+
+func TestAdditionalProvidersHCL(t *testing.T) {
+	t.Parallel()
+
+	programYAML := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: addl-prov-prog
+  namespace: default
+spec:
+  programHCL: |
+    terraform {
+      required_providers {
+        random = {
+          source  = "hashicorp/random"
+          version = "~> 3.6"
+        }
+      }
+    }
+    resource "random_pet" "name" {
+      length = 2
+    }
+    output "pet_name" {
+      value = random_pet.name.id
+    }
+`
+	defer deleteYAML(t, programYAML)
+	applyYAML(t, programYAML)
+
+	projectYAML := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: addl-prov-test
+  namespace: default
+spec:
+  programRef:
+    name: addl-prov-prog
+  autoApprove: true
+  additionalProvidersHCL: |
+    provider "random" {}
+`
+	defer deleteYAML(t, projectYAML)
+	applyYAML(t, projectYAML)
+
+	dynClient := newDynamicClient(t)
+	waitForPhase(t, dynClient, "default", "addl-prov-test", "Succeeded", 120*time.Second)
+}
+
+func TestBackendStripping(t *testing.T) {
+	t.Parallel()
+
+	// Program with a local backend that should be stripped automatically
+	programYAML := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: backend-strip-prog
+  namespace: default
+spec:
+  providers:
+    - name: random
+      source: "hashicorp/random"
+      version: "~> 3.6"
+  programHCL: |
+    terraform {
+      backend "local" {
+        path = "/tmp/terraform.tfstate"
+      }
+    }
+    resource "random_pet" "name" {
+      length = 2
+    }
+    output "pet_name" {
+      value = random_pet.name.id
+    }
+`
+	defer deleteYAML(t, programYAML)
+	applyYAML(t, programYAML)
+
+	projectYAML := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: backend-strip-test
+  namespace: default
+spec:
+  programRef:
+    name: backend-strip-prog
+  autoApprove: true
+`
+	defer deleteYAML(t, projectYAML)
+	applyYAML(t, projectYAML)
+
+	dynClient := newDynamicClient(t)
+	waitForPhase(t, dynClient, "default", "backend-strip-test", "Succeeded", 120*time.Second)
 }

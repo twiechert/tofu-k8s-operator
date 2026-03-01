@@ -29,6 +29,7 @@
 - Retry policy — automatically retry failed Jobs with configurable delay
 - Drift detection — periodic plan-only jobs to detect infrastructure drift
 - Webhook notifications — send HTTP POST notifications on lifecycle events
+- [Ignore providers & additional providers HCL](doc/ignore-providers.md) — strip source provider/backend blocks, inject custom provider config
 
 ## Quick Start
 
@@ -110,6 +111,7 @@ spec:
 | [Retry Policy](doc/retry-policy.md) | Automatically retry failed Jobs with configurable delay |
 | [Drift Detection](doc/drift-detection.md) | Periodic plan-only jobs to detect infrastructure drift |
 | [Webhook Notifications](doc/webhooks.md) | HTTP POST notifications on lifecycle events |
+| [Ignore Providers](doc/ignore-providers.md) | Strip source provider/backend blocks, inject custom provider config |
 | [Examples](doc/examples.md) | AWS S3 bucket example and more |
 
 ## Build & Test
