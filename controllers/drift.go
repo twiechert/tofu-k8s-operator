@@ -103,6 +103,14 @@ func (r *TofuProjectReconciler) reconcileDriftDetection(ctx context.Context, pro
 	if err := addResourcesToJob(newJob, project); err != nil {
 		return ctrl.Result{}, err
 	}
+	driftGitMode := isGitSource(program)
+	var driftSource *tofuv1alpha1.GitSource
+	if driftGitMode {
+		driftSource = program.Spec.Source
+	}
+	if err := addValidationToJob(newJob, project, image, driftGitMode, driftSource); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
 		return ctrl.Result{}, err
 	}

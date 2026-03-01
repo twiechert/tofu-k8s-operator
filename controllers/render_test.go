@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
 	tofuv1alpha1 "github.com/twiechert/tofu-k8s-operator/api/v1alpha1"
 )
 
@@ -39,7 +41,7 @@ func TestRenderBackendTF(t *testing.T) {
 }
 
 func TestRenderCommand(t *testing.T) {
-	cmd := renderCommand("dev", true, false, nil, false)
+	cmd := renderCommand("dev", true, false, nil, false, true)
 	if !strings.Contains(cmd, "workspace") {
 		t.Fatal("workspace logic missing")
 	}
@@ -52,7 +54,7 @@ func TestRenderCommand(t *testing.T) {
 }
 
 func TestRenderDestroyCommand(t *testing.T) {
-	cmd := renderDestroyCommand("dev", false, nil, false)
+	cmd := renderDestroyCommand("dev", false, nil, false, true)
 	if !strings.Contains(cmd, "workspace") {
 		t.Fatal("workspace logic missing")
 	}
@@ -65,7 +67,7 @@ func TestRenderDestroyCommand(t *testing.T) {
 }
 
 func TestRenderDestroyCommandNoWorkspace(t *testing.T) {
-	cmd := renderDestroyCommand("", false, nil, false)
+	cmd := renderDestroyCommand("", false, nil, false, true)
 	if strings.Contains(cmd, "workspace") {
 		t.Fatal("unexpected workspace logic")
 	}
@@ -76,7 +78,7 @@ func TestRenderDestroyCommandNoWorkspace(t *testing.T) {
 
 func TestRenderCommandGitSource(t *testing.T) {
 	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git"}
-	cmd := renderCommand("", true, true, src, false)
+	cmd := renderCommand("", true, true, src, false, true)
 	if !strings.Contains(cmd, "cp -r /git-repo/./. /work/") {
 		t.Fatal("expected git-repo copy step")
 	}
@@ -90,7 +92,7 @@ func TestRenderCommandGitSource(t *testing.T) {
 
 func TestRenderCommandGitSourceSubpath(t *testing.T) {
 	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git", Path: "infra/prod"}
-	cmd := renderCommand("staging", true, true, src, false)
+	cmd := renderCommand("staging", true, true, src, false, true)
 	if !strings.Contains(cmd, "cp -r /git-repo/infra/prod/. /work/") {
 		t.Fatal("expected subpath copy step")
 	}
@@ -104,7 +106,7 @@ func TestRenderCommandGitSourceSubpath(t *testing.T) {
 
 func TestRenderDestroyCommandGitSource(t *testing.T) {
 	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git", Path: "modules/vpc"}
-	cmd := renderDestroyCommand("prod", true, src, false)
+	cmd := renderDestroyCommand("prod", true, src, false, true)
 	if !strings.Contains(cmd, "cp -r /git-repo/modules/vpc/. /work/") {
 		t.Fatal("expected git-repo copy step for destroy")
 	}
@@ -157,7 +159,7 @@ func TestIsGitSource(t *testing.T) {
 // --- New tests for plan-approve flow ---
 
 func TestRenderPlanCommand(t *testing.T) {
-	cmd := renderPlanCommand("dev", false, nil, false)
+	cmd := renderPlanCommand("dev", false, nil, false, true)
 	if !strings.Contains(cmd, "workspace") {
 		t.Fatal("workspace logic missing")
 	}
@@ -170,7 +172,7 @@ func TestRenderPlanCommand(t *testing.T) {
 }
 
 func TestRenderPlanCommandNoWorkspace(t *testing.T) {
-	cmd := renderPlanCommand("", false, nil, false)
+	cmd := renderPlanCommand("", false, nil, false, true)
 	if strings.Contains(cmd, "workspace") {
 		t.Fatal("unexpected workspace logic")
 	}
@@ -181,7 +183,7 @@ func TestRenderPlanCommandNoWorkspace(t *testing.T) {
 
 func TestRenderPlanCommandGitSource(t *testing.T) {
 	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git", Path: "infra"}
-	cmd := renderPlanCommand("staging", true, src, false)
+	cmd := renderPlanCommand("staging", true, src, false, true)
 	if !strings.Contains(cmd, "cp -r /git-repo/infra/. /work/") {
 		t.Fatal("expected git-repo copy step")
 	}
@@ -326,7 +328,7 @@ func TestParseSyncInterval(t *testing.T) {
 // --- Tests for output marker in render commands ---
 
 func TestRenderCommandIncludesOutputMarker(t *testing.T) {
-	cmd := renderCommand("", true, false, nil, false)
+	cmd := renderCommand("", true, false, nil, false, true)
 	if !strings.Contains(cmd, outputMarker) {
 		t.Fatal("apply command should include output marker")
 	}
@@ -336,7 +338,7 @@ func TestRenderCommandIncludesOutputMarker(t *testing.T) {
 }
 
 func TestRenderPlanCommandNoOutputMarker(t *testing.T) {
-	cmd := renderPlanCommand("", false, nil, false)
+	cmd := renderPlanCommand("", false, nil, false, true)
 	if strings.Contains(cmd, outputMarker) {
 		t.Fatal("plan command should NOT include output marker")
 	}
@@ -346,7 +348,7 @@ func TestRenderPlanCommandNoOutputMarker(t *testing.T) {
 }
 
 func TestRenderDestroyCommandNoOutputMarker(t *testing.T) {
-	cmd := renderDestroyCommand("", false, nil, false)
+	cmd := renderDestroyCommand("", false, nil, false, true)
 	if strings.Contains(cmd, outputMarker) {
 		t.Fatal("destroy command should NOT include output marker")
 	}
@@ -451,9 +453,361 @@ func TestAddCacheToJob(t *testing.T) {
 func fakeProject(name string) tofuv1alpha1.TofuProject {
 	return tofuv1alpha1.TofuProject{
 		Spec: tofuv1alpha1.TofuProjectSpec{
-			Backend: tofuv1alpha1.KubernetesBackendSpec{
-				SecretSuffix: name,
+			Backend: tofuv1alpha1.BackendSpec{
+				KubernetesBackendSpec: tofuv1alpha1.KubernetesBackendSpec{
+					SecretSuffix: name,
+				},
 			},
 		},
+	}
+}
+
+func TestRenderS3BackendTF(t *testing.T) {
+	p := tofuv1alpha1.TofuProject{}
+	p.Name = "my-project"
+	p.Namespace = "default"
+	p.Spec.Backend = tofuv1alpha1.BackendSpec{
+		Type: "s3",
+		S3: &tofuv1alpha1.S3BackendSpec{
+			Bucket: "my-tfstate-bucket",
+			Region: "eu-west-1",
+		},
+	}
+
+	out := renderBackendTF(p)
+
+	if !strings.Contains(out, `backend "s3"`) {
+		t.Fatal("missing s3 backend")
+	}
+	if !strings.Contains(out, `bucket       = "my-tfstate-bucket"`) {
+		t.Fatal("missing bucket")
+	}
+	if !strings.Contains(out, `region       = "eu-west-1"`) {
+		t.Fatal("missing region")
+	}
+	if !strings.Contains(out, `key          = "default/my-project/terraform.tfstate"`) {
+		t.Fatal("missing default key")
+	}
+	if !strings.Contains(out, "use_lockfile = true") {
+		t.Fatal("missing use_lockfile")
+	}
+	if !strings.Contains(out, "encrypt      = true") {
+		t.Fatal("missing encrypt")
+	}
+}
+
+func TestRenderS3BackendTFCustomKey(t *testing.T) {
+	p := tofuv1alpha1.TofuProject{}
+	p.Name = "my-project"
+	p.Namespace = "default"
+	p.Spec.Backend = tofuv1alpha1.BackendSpec{
+		Type: "s3",
+		S3: &tofuv1alpha1.S3BackendSpec{
+			Bucket: "my-bucket",
+			Region: "us-east-1",
+			Key:    "custom/path/state.tfstate",
+		},
+	}
+
+	out := renderBackendTF(p)
+
+	if !strings.Contains(out, `key          = "custom/path/state.tfstate"`) {
+		t.Fatal("expected custom key, got default")
+	}
+}
+
+func TestRenderBackendTFDefaultsToKubernetes(t *testing.T) {
+	p := fakeProject("demo")
+	out := renderBackendTF(p)
+
+	if !strings.Contains(out, `backend "kubernetes"`) {
+		t.Fatal("expected kubernetes backend for empty type")
+	}
+}
+
+// --- Tests for tofu validate flag ---
+
+func TestRenderCommandWithTofuValidate(t *testing.T) {
+	cmd := renderCommand("", true, false, nil, false, true)
+	if !strings.Contains(cmd, "tofu validate") {
+		t.Fatal("expected 'tofu validate' when tofuValidate=true")
+	}
+	// Verify ordering: validate comes after init and before apply
+	initIdx := strings.Index(cmd, "tofu init")
+	validateIdx := strings.Index(cmd, "tofu validate")
+	applyIdx := strings.Index(cmd, "tofu apply")
+	if validateIdx <= initIdx || validateIdx >= applyIdx {
+		t.Fatal("tofu validate should come after tofu init and before tofu apply")
+	}
+}
+
+func TestRenderCommandWithoutTofuValidate(t *testing.T) {
+	cmd := renderCommand("", true, false, nil, false, false)
+	if strings.Contains(cmd, "tofu validate") {
+		t.Fatal("expected no 'tofu validate' when tofuValidate=false")
+	}
+}
+
+func TestRenderPlanCommandWithTofuValidate(t *testing.T) {
+	cmd := renderPlanCommand("", false, nil, false, true)
+	if !strings.Contains(cmd, "tofu validate") {
+		t.Fatal("expected 'tofu validate' when tofuValidate=true")
+	}
+	initIdx := strings.Index(cmd, "tofu init")
+	validateIdx := strings.Index(cmd, "tofu validate")
+	planIdx := strings.Index(cmd, "tofu plan")
+	if validateIdx <= initIdx || validateIdx >= planIdx {
+		t.Fatal("tofu validate should come after tofu init and before tofu plan")
+	}
+}
+
+func TestRenderPlanCommandWithoutTofuValidate(t *testing.T) {
+	cmd := renderPlanCommand("", false, nil, false, false)
+	if strings.Contains(cmd, "tofu validate") {
+		t.Fatal("expected no 'tofu validate' when tofuValidate=false")
+	}
+}
+
+func TestRenderDestroyCommandWithTofuValidate(t *testing.T) {
+	cmd := renderDestroyCommand("", false, nil, false, true)
+	if !strings.Contains(cmd, "tofu validate") {
+		t.Fatal("expected 'tofu validate' when tofuValidate=true")
+	}
+	initIdx := strings.Index(cmd, "tofu init")
+	validateIdx := strings.Index(cmd, "tofu validate")
+	destroyIdx := strings.Index(cmd, "tofu destroy")
+	if validateIdx <= initIdx || validateIdx >= destroyIdx {
+		t.Fatal("tofu validate should come after tofu init and before tofu destroy")
+	}
+}
+
+func TestRenderDestroyCommandWithoutTofuValidate(t *testing.T) {
+	cmd := renderDestroyCommand("", false, nil, false, false)
+	if strings.Contains(cmd, "tofu validate") {
+		t.Fatal("expected no 'tofu validate' when tofuValidate=false")
+	}
+}
+
+func TestTofuValidateEnabled(t *testing.T) {
+	// nil Validation → default true
+	p := &tofuv1alpha1.TofuProject{}
+	if !tofuValidateEnabled(p) {
+		t.Fatal("expected true when Validation is nil")
+	}
+
+	// nil TofuValidate → default true
+	p.Spec.Validation = &tofuv1alpha1.ValidationSpec{}
+	if !tofuValidateEnabled(p) {
+		t.Fatal("expected true when TofuValidate is nil")
+	}
+
+	// explicit true
+	tr := true
+	p.Spec.Validation.TofuValidate = &tr
+	if !tofuValidateEnabled(p) {
+		t.Fatal("expected true when TofuValidate is true")
+	}
+
+	// explicit false
+	fa := false
+	p.Spec.Validation.TofuValidate = &fa
+	if tofuValidateEnabled(p) {
+		t.Fatal("expected false when TofuValidate is false")
+	}
+}
+
+// --- Tests for addValidationToJob ---
+
+func TestAddValidationToJob_StandardTflint(t *testing.T) {
+	project := fakeProject("test")
+	project.Spec.Validation = &tofuv1alpha1.ValidationSpec{
+		Steps: []tofuv1alpha1.ValidationStep{
+			{Name: "tflint", Standard: "tflint"},
+		},
+	}
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{ProgramHCL: "resource {}"},
+	}
+	job := buildJob(project, "test-apply", "test-tf", "opentofu:latest", program, "tofu-runner")
+	err := addValidationToJob(job, &project, "opentofu:latest", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(job.Spec.Template.Spec.InitContainers) != 1 {
+		t.Fatalf("expected 1 init container, got %d", len(job.Spec.Template.Spec.InitContainers))
+	}
+	ic := job.Spec.Template.Spec.InitContainers[0]
+	if ic.Name != "validate-tflint" {
+		t.Fatalf("expected container name validate-tflint, got %s", ic.Name)
+	}
+	if ic.Image != "ghcr.io/terraform-linters/tflint:latest" {
+		t.Fatalf("expected tflint image, got %s", ic.Image)
+	}
+	script := ic.Command[2]
+	if !strings.Contains(script, "tflint --init && tflint") {
+		t.Fatal("expected tflint command in script")
+	}
+}
+
+func TestAddValidationToJob_CustomStep(t *testing.T) {
+	project := fakeProject("test")
+	project.Spec.Validation = &tofuv1alpha1.ValidationSpec{
+		Steps: []tofuv1alpha1.ValidationStep{
+			{Name: "my-policy", Custom: &tofuv1alpha1.CustomValidationStep{
+				Command: "conftest test .",
+				Image:   "openpolicyagent/conftest:latest",
+			}},
+		},
+	}
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{ProgramHCL: "resource {}"},
+	}
+	job := buildJob(project, "test-apply", "test-tf", "opentofu:latest", program, "tofu-runner")
+	err := addValidationToJob(job, &project, "opentofu:latest", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	ic := job.Spec.Template.Spec.InitContainers[0]
+	if ic.Image != "openpolicyagent/conftest:latest" {
+		t.Fatalf("expected custom image, got %s", ic.Image)
+	}
+	if !strings.Contains(ic.Command[2], "conftest test .") {
+		t.Fatal("expected custom command")
+	}
+}
+
+func TestAddValidationToJob_CustomDefaultImage(t *testing.T) {
+	project := fakeProject("test")
+	project.Spec.Validation = &tofuv1alpha1.ValidationSpec{
+		Steps: []tofuv1alpha1.ValidationStep{
+			{Name: "custom", Custom: &tofuv1alpha1.CustomValidationStep{
+				Command: "echo hello",
+			}},
+		},
+	}
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{ProgramHCL: "resource {}"},
+	}
+	job := buildJob(project, "test-apply", "test-tf", "opentofu:latest", program, "tofu-runner")
+	err := addValidationToJob(job, &project, "opentofu:latest", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	ic := job.Spec.Template.Spec.InitContainers[0]
+	if ic.Image != "opentofu:latest" {
+		t.Fatalf("expected default main image, got %s", ic.Image)
+	}
+}
+
+func TestAddValidationToJob_GitModeVolumeMounts(t *testing.T) {
+	project := fakeProject("test")
+	project.Spec.Validation = &tofuv1alpha1.ValidationSpec{
+		Steps: []tofuv1alpha1.ValidationStep{
+			{Name: "tflint", Standard: "tflint"},
+		},
+	}
+	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git", Path: "infra"}
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{Source: src},
+	}
+	job := buildPlanJob(project, "test-plan", "test-tf", "opentofu:latest", program, "tofu-runner")
+	err := addValidationToJob(job, &project, "opentofu:latest", true, src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Find the validation init container (not the git-clone one)
+	var validationIC *corev1.Container
+	for i := range job.Spec.Template.Spec.InitContainers {
+		if job.Spec.Template.Spec.InitContainers[i].Name == "validate-tflint" {
+			validationIC = &job.Spec.Template.Spec.InitContainers[i]
+			break
+		}
+	}
+	if validationIC == nil {
+		t.Fatal("expected validate-tflint init container")
+	}
+	// Check git-repo mount
+	hasGitMount := false
+	for _, m := range validationIC.VolumeMounts {
+		if m.Name == "git-repo" {
+			hasGitMount = true
+			break
+		}
+	}
+	if !hasGitMount {
+		t.Fatal("expected git-repo volume mount in git mode")
+	}
+	// Check copy script references git-repo with path
+	if !strings.Contains(validationIC.Command[2], "cp -r /git-repo/infra/. /tmp/validate/") {
+		t.Fatal("expected git-repo copy with path in script")
+	}
+}
+
+func TestAddValidationToJob_UnknownStandard(t *testing.T) {
+	project := fakeProject("test")
+	project.Spec.Validation = &tofuv1alpha1.ValidationSpec{
+		Steps: []tofuv1alpha1.ValidationStep{
+			{Name: "unknown", Standard: "nonexistent"},
+		},
+	}
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{ProgramHCL: "resource {}"},
+	}
+	job := buildJob(project, "test-apply", "test-tf", "opentofu:latest", program, "tofu-runner")
+	err := addValidationToJob(job, &project, "opentofu:latest", false, nil)
+	if err == nil {
+		t.Fatal("expected error for unknown standard validator")
+	}
+	if !strings.Contains(err.Error(), "unknown standard validator") {
+		t.Fatalf("expected unknown standard validator error, got: %v", err)
+	}
+}
+
+func TestAddValidationToJob_NoSteps(t *testing.T) {
+	project := fakeProject("test")
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{ProgramHCL: "resource {}"},
+	}
+	job := buildJob(project, "test-apply", "test-tf", "opentofu:latest", program, "tofu-runner")
+	initBefore := len(job.Spec.Template.Spec.InitContainers)
+	err := addValidationToJob(job, &project, "opentofu:latest", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(job.Spec.Template.Spec.InitContainers) != initBefore {
+		t.Fatal("expected no init containers added when no validation steps")
+	}
+}
+
+func TestAddValidationToJob_MultipleSteps(t *testing.T) {
+	project := fakeProject("test")
+	project.Spec.Validation = &tofuv1alpha1.ValidationSpec{
+		Steps: []tofuv1alpha1.ValidationStep{
+			{Name: "tflint", Standard: "tflint"},
+			{Name: "checkov", Standard: "checkov"},
+			{Name: "custom", Custom: &tofuv1alpha1.CustomValidationStep{Command: "echo ok", Image: "alpine:latest"}},
+		},
+	}
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{ProgramHCL: "resource {}"},
+	}
+	job := buildJob(project, "test-apply", "test-tf", "opentofu:latest", program, "tofu-runner")
+	err := addValidationToJob(job, &project, "opentofu:latest", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(job.Spec.Template.Spec.InitContainers) != 3 {
+		t.Fatalf("expected 3 init containers, got %d", len(job.Spec.Template.Spec.InitContainers))
+	}
+	names := []string{
+		job.Spec.Template.Spec.InitContainers[0].Name,
+		job.Spec.Template.Spec.InitContainers[1].Name,
+		job.Spec.Template.Spec.InitContainers[2].Name,
+	}
+	expected := []string{"validate-tflint", "validate-checkov", "validate-custom"}
+	for i, n := range names {
+		if n != expected[i] {
+			t.Fatalf("expected container %d to be %s, got %s", i, expected[i], n)
+		}
 	}
 }

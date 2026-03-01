@@ -11,12 +11,92 @@ import (
 	tofuv1alpha1 "github.com/twiechert/tofu-k8s-operator/api/v1alpha1"
 )
 
+type StandardValidator struct {
+	Image   string
+	Command string
+}
+
+var standardValidators = map[string]StandardValidator{
+	"tflint":  {Image: "ghcr.io/terraform-linters/tflint:latest", Command: "tflint --init && tflint"},
+	"checkov": {Image: "bridgecrew/checkov:latest", Command: "checkov -d . --framework terraform --compact"},
+	"trivy":   {Image: "aquasec/trivy:latest", Command: "trivy config ."},
+}
+
+// addValidationToJob appends validation init containers to a Job based on the project's validation steps.
+func addValidationToJob(job *batchv1.Job, project *tofuv1alpha1.TofuProject, mainImage string, gitMode bool, source *tofuv1alpha1.GitSource) error {
+	if project.Spec.Validation == nil || len(project.Spec.Validation.Steps) == 0 {
+		return nil
+	}
+
+	for _, step := range project.Spec.Validation.Steps {
+		var img, cmd string
+
+		if step.Standard != "" {
+			sv, ok := standardValidators[step.Standard]
+			if !ok {
+				return fmt.Errorf("unknown standard validator %q", step.Standard)
+			}
+			img = sv.Image
+			cmd = sv.Command
+		} else if step.Custom != nil {
+			cmd = step.Custom.Command
+			img = step.Custom.Image
+			if img == "" {
+				img = mainImage
+			}
+		} else {
+			return fmt.Errorf("validation step %q must set either standard or custom", step.Name)
+		}
+
+		copyScript := "cp /tf-config/* /tmp/validate/"
+		if gitMode && source != nil {
+			path := source.Path
+			if path == "" {
+				path = "."
+			}
+			copyScript = fmt.Sprintf("cp -r /git-repo/%s/. /tmp/validate/\ncp /tf-config/* /tmp/validate/", path)
+		}
+
+		script := fmt.Sprintf(`set -euo pipefail
+mkdir -p /tmp/validate
+%s
+cd /tmp/validate
+%s
+`, copyScript, cmd)
+
+		container := corev1.Container{
+			Name:       fmt.Sprintf("validate-%s", step.Name),
+			Image:      img,
+			Command:    []string{"/bin/sh", "-c", script},
+			WorkingDir: "/tmp/validate",
+			VolumeMounts: []corev1.VolumeMount{{
+				Name:      "tf-config",
+				MountPath: "/tf-config",
+				ReadOnly:  true,
+			}},
+		}
+
+		if gitMode {
+			container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+				Name:      "git-repo",
+				MountPath: "/git-repo",
+				ReadOnly:  true,
+			})
+		}
+
+		job.Spec.Template.Spec.InitContainers = append(job.Spec.Template.Spec.InitContainers, container)
+	}
+
+	return nil
+}
+
 // buildPlanJob creates a Job that runs `tofu plan`.
 func buildPlanJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram, saName string) *batchv1.Job {
 	backoff := int32(0)
 	workspace := project.Spec.Workspace
 	gitMode := isGitSource(program)
-	cmd := []string{"/bin/sh", "-c", renderPlanCommand(workspace, gitMode, program.Spec.Source, project.Spec.IgnoreProviders)}
+	validate := tofuValidateEnabled(&project)
+	cmd := []string{"/bin/sh", "-c", renderPlanCommand(workspace, gitMode, program.Spec.Source, project.Spec.IgnoreProviders, validate)}
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -107,7 +187,8 @@ func buildJob(project tofuv1alpha1.TofuProject, jobName, cmName, image string, p
 	backoff := int32(0)
 	workspace := project.Spec.Workspace
 	gitMode := isGitSource(program)
-	cmd := []string{"/bin/sh", "-c", renderCommand(workspace, project.Spec.AutoApprove, gitMode, program.Spec.Source, project.Spec.IgnoreProviders)}
+	validate := tofuValidateEnabled(&project)
+	cmd := []string{"/bin/sh", "-c", renderCommand(workspace, project.Spec.AutoApprove, gitMode, program.Spec.Source, project.Spec.IgnoreProviders, validate)}
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -256,7 +337,8 @@ func buildDestroyJob(project *tofuv1alpha1.TofuProject, jobName, cmName, image s
 	if gitMode {
 		source = program.Spec.Source
 	}
-	cmd := []string{"/bin/sh", "-c", renderDestroyCommand(project.Spec.Workspace, gitMode, source, project.Spec.IgnoreProviders)}
+	validate := tofuValidateEnabled(project)
+	cmd := []string{"/bin/sh", "-c", renderDestroyCommand(project.Spec.Workspace, gitMode, source, project.Spec.IgnoreProviders, validate)}
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

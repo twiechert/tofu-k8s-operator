@@ -37,7 +37,9 @@
 - Retry policy — automatically retry failed Jobs with configurable delay
 - Drift detection — periodic plan-only jobs to detect infrastructure drift
 - Webhook notifications — send HTTP POST notifications on lifecycle events
+- [Validation chain](doc/validation.md) — `tofu validate` + standard tools (tflint, checkov, trivy) or custom commands as init containers
 - [Ignore providers & additional providers HCL](doc/ignore-providers.md) — strip source provider/backend blocks, inject custom provider config
+- [Revision history & pinned revisions](doc/revisions.md) — audit trail of every apply, rollback to any stored revision
 
 ## Quick Start
 
@@ -119,7 +121,9 @@ spec:
 | [Retry Policy](doc/retry-policy.md) | Automatically retry failed Jobs with configurable delay |
 | [Drift Detection](doc/drift-detection.md) | Periodic plan-only jobs to detect infrastructure drift |
 | [Webhook Notifications](doc/webhooks.md) | HTTP POST notifications on lifecycle events |
+| [Validation](doc/validation.md) | Pre-apply validation chain: `tofu validate` + standard tools or custom commands |
 | [Ignore Providers](doc/ignore-providers.md) | Strip source provider/backend blocks, inject custom provider config |
+| [Revision History](doc/revisions.md) | Audit trail of every apply, rollback to any stored revision |
 | [Examples](doc/examples.md) | AWS S3 bucket example and more |
 
 ## Build & Test

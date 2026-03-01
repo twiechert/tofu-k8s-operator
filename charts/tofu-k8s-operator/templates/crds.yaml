@@ -147,8 +147,18 @@ spec:
                 backend:
                   type: object
                   properties:
+                    type:
+                      type: string
+                      enum: [kubernetes, s3]
                     secretSuffix: {type: string}
                     namespace: {type: string}
+                    s3:
+                      type: object
+                      required: [bucket, region]
+                      properties:
+                        bucket: {type: string}
+                        region: {type: string}
+                        key: {type: string}
                 keepInSync:
                   type: boolean
                   description: "If true, the controller will run 'tofu apply' instead of 'tofu plan' in the sync loop."
@@ -260,18 +270,49 @@ spec:
                           events:
                             type: array
                             items: {type: string}
+                validation:
+                  type: object
+                  description: "Configure pre-apply validation (tofu validate + optional tool steps)"
+                  properties:
+                    tofuValidate:
+                      type: boolean
+                    steps:
+                      type: array
+                      items:
+                        type: object
+                        required: [name]
+                        properties:
+                          name: {type: string}
+                          standard:
+                            type: string
+                            enum: [tflint, checkov, trivy]
+                          custom:
+                            type: object
+                            required: [command]
+                            properties:
+                              command: {type: string}
+                              image: {type: string}
                 ignoreProviders:
                   type: boolean
                   description: "Strip all provider blocks from source .tf files"
                 additionalProvidersHCL:
                   type: string
                   description: "Raw HCL for additional provider configuration, written as additional-providers.tf"
+                revisionHistoryLimit:
+                  type: integer
+                  format: int32
+                  description: "Maximum number of revision ConfigMaps to retain. Default: 10. 0 = keep all."
+                pinnedRevision:
+                  type: integer
+                  format: int32
+                  description: "Pin to a stored revision for rollback. 0 = normal flow."
             status:
               type: object
               properties:
                 observedGeneration: {type: integer, format: int64}
                 lastJobName: {type: string}
                 lastAppliedHash: {type: string}
+                revision: {type: integer, format: int32}
                 phase: {type: string}
                 message: {type: string}
                 syncStatus:

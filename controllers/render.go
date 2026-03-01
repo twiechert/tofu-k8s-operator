@@ -11,7 +11,14 @@ func isGitSource(program *tofuv1alpha1.TofuProgram) bool {
 	return program.Spec.Source != nil && program.Spec.Source.URL != ""
 }
 
-func renderCommand(workspace string, autoApprove bool, gitMode bool, source *tofuv1alpha1.GitSource, ignoreProviders bool) string {
+func tofuValidateEnabled(project *tofuv1alpha1.TofuProject) bool {
+	if project.Spec.Validation == nil || project.Spec.Validation.TofuValidate == nil {
+		return true // default true
+	}
+	return *project.Spec.Validation.TofuValidate
+}
+
+func renderCommand(workspace string, autoApprove bool, gitMode bool, source *tofuv1alpha1.GitSource, ignoreProviders bool, tofuValidate bool) string {
 	approve := ""
 	if autoApprove {
 		approve = " -auto-approve"
@@ -32,18 +39,22 @@ func renderCommand(workspace string, autoApprove bool, gitMode bool, source *tof
 	if ignoreProviders {
 		stripSteps += renderStripProvidersStep()
 	}
+	validate := ""
+	if tofuValidate {
+		validate = "tofu validate\n"
+	}
 	return fmt.Sprintf(`set -euo pipefail
 %s
 %stofu version
 tofu init -input=false
-%stofu apply -input=false%s
+%s%stofu apply -input=false%s
 echo '%s'
 tofu output -json
-`, copyStep, stripSteps, ws, approve, outputMarker)
+`, copyStep, stripSteps, validate, ws, approve, outputMarker)
 }
 
 // renderPlanCommand generates the shell command for tofu plan.
-func renderPlanCommand(workspace string, gitMode bool, source *tofuv1alpha1.GitSource, ignoreProviders bool) string {
+func renderPlanCommand(workspace string, gitMode bool, source *tofuv1alpha1.GitSource, ignoreProviders bool, tofuValidate bool) string {
 	ws := ""
 	if strings.TrimSpace(workspace) != "" {
 		ws = fmt.Sprintf("tofu workspace select %s || tofu workspace new %s\n", shellEscape(workspace), shellEscape(workspace))
@@ -60,15 +71,19 @@ func renderPlanCommand(workspace string, gitMode bool, source *tofuv1alpha1.GitS
 	if ignoreProviders {
 		stripSteps += renderStripProvidersStep()
 	}
+	validate := ""
+	if tofuValidate {
+		validate = "tofu validate\n"
+	}
 	return fmt.Sprintf(`set -euo pipefail
 %s
 %stofu version
 tofu init -input=false
-%stofu plan -input=false -no-color
-`, copyStep, stripSteps, ws)
+%s%stofu plan -input=false -no-color
+`, copyStep, stripSteps, validate, ws)
 }
 
-func renderDestroyCommand(workspace string, gitMode bool, source *tofuv1alpha1.GitSource, ignoreProviders bool) string {
+func renderDestroyCommand(workspace string, gitMode bool, source *tofuv1alpha1.GitSource, ignoreProviders bool, tofuValidate bool) string {
 	ws := ""
 	if strings.TrimSpace(workspace) != "" {
 		ws = fmt.Sprintf("tofu workspace select %s || tofu workspace new %s\n", shellEscape(workspace), shellEscape(workspace))
@@ -85,12 +100,16 @@ func renderDestroyCommand(workspace string, gitMode bool, source *tofuv1alpha1.G
 	if ignoreProviders {
 		stripSteps += renderStripProvidersStep()
 	}
+	validate := ""
+	if tofuValidate {
+		validate = "tofu validate\n"
+	}
 	return fmt.Sprintf(`set -euo pipefail
 %s
 %stofu version
 tofu init -input=false
-%stofu destroy -input=false -auto-approve
-`, copyStep, stripSteps, ws)
+%s%stofu destroy -input=false -auto-approve
+`, copyStep, stripSteps, validate, ws)
 }
 
 func renderProvidersTF(providers []tofuv1alpha1.ProviderSpec) string {
@@ -121,6 +140,13 @@ func renderProvidersTF(providers []tofuv1alpha1.ProviderSpec) string {
 }
 
 func renderBackendTF(project tofuv1alpha1.TofuProject) string {
+	if project.Spec.Backend.Type == "s3" {
+		return renderS3BackendTF(project)
+	}
+	return renderKubernetesBackendTF(project)
+}
+
+func renderKubernetesBackendTF(project tofuv1alpha1.TofuProject) string {
 	ns := project.Spec.Backend.Namespace
 	if ns == "" {
 		ns = project.Namespace
@@ -138,6 +164,24 @@ func renderBackendTF(project tofuv1alpha1.TofuProject) string {
   }
 }
 `, suffix, ns)
+}
+
+func renderS3BackendTF(project tofuv1alpha1.TofuProject) string {
+	s3 := project.Spec.Backend.S3
+	key := s3.Key
+	if key == "" {
+		key = fmt.Sprintf("%s/%s/terraform.tfstate", project.Namespace, project.Name)
+	}
+	return fmt.Sprintf(`terraform {
+  backend "s3" {
+    bucket       = %q
+    key          = %q
+    region       = %q
+    use_lockfile = true
+    encrypt      = true
+  }
+}
+`, s3.Bucket, key, s3.Region)
 }
 
 // renderStripBackendStep returns shell commands to strip backend blocks from .tf files.

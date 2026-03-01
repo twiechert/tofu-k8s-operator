@@ -91,6 +91,11 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		r.updateStatusWithCondition(ctx, &project)
 	}
 
+	// Pinned revision — use stored snapshot instead of computing from current spec
+	if project.Spec.PinnedRevision > 0 {
+		return r.reconcilePinned(ctx, &project)
+	}
+
 	// Fetch referenced program
 	progNs := project.Spec.ProgramRef.Namespace
 	if progNs == "" {
@@ -102,6 +107,42 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		project.Status.Message = fmt.Sprintf("failed to get TofuProgram %s/%s: %v", progNs, project.Spec.ProgramRef.Name, err)
 		r.updateStatusWithCondition(ctx, &project)
 		return ctrl.Result{}, err
+	}
+
+	// Validate S3 backend
+	if project.Spec.Backend.Type == "s3" {
+		if project.Spec.Backend.S3 == nil || project.Spec.Backend.S3.Bucket == "" || project.Spec.Backend.S3.Region == "" {
+			project.Status.Phase = "Error"
+			project.Status.Message = "S3 backend requires s3.bucket and s3.region to be set"
+			r.updateStatusWithCondition(ctx, &project)
+			return ctrl.Result{}, fmt.Errorf("S3 backend missing required fields for TofuProject %s/%s", project.Namespace, project.Name)
+		}
+	}
+
+	// Validate validation steps
+	if project.Spec.Validation != nil {
+		for _, step := range project.Spec.Validation.Steps {
+			if step.Standard != "" && step.Custom != nil {
+				project.Status.Phase = "Error"
+				project.Status.Message = fmt.Sprintf("validation step %q must set either standard or custom, not both", step.Name)
+				r.updateStatusWithCondition(ctx, &project)
+				return ctrl.Result{}, fmt.Errorf("validation step %q has both standard and custom set", step.Name)
+			}
+			if step.Standard == "" && step.Custom == nil {
+				project.Status.Phase = "Error"
+				project.Status.Message = fmt.Sprintf("validation step %q must set either standard or custom", step.Name)
+				r.updateStatusWithCondition(ctx, &project)
+				return ctrl.Result{}, fmt.Errorf("validation step %q has neither standard nor custom set", step.Name)
+			}
+			if step.Standard != "" {
+				if _, ok := standardValidators[step.Standard]; !ok {
+					project.Status.Phase = "Error"
+					project.Status.Message = fmt.Sprintf("unknown standard validator %q in step %q", step.Standard, step.Name)
+					r.updateStatusWithCondition(ctx, &project)
+					return ctrl.Result{}, fmt.Errorf("unknown standard validator %q", step.Standard)
+				}
+			}
+		}
 	}
 
 	// Validate mutually exclusive fields
@@ -160,6 +201,10 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 	if project.Spec.AdditionalProvidersHCL != "" {
 		hashInput += "|additionalProviders:" + project.Spec.AdditionalProvidersHCL
+	}
+	if project.Spec.Validation != nil {
+		valJSON, _ := json.Marshal(project.Spec.Validation)
+		hashInput += "|validation:" + string(valJSON)
 	}
 	hash := sha256.Sum256([]byte(hashInput))
 	appliedHash := hex.EncodeToString(hash[:])
@@ -325,6 +370,14 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 		if err := addResourcesToJob(newJob, project); err != nil {
 			return ctrl.Result{}, err
 		}
+		gitMode := isGitSource(program)
+		var source *tofuv1alpha1.GitSource
+		if gitMode {
+			source = program.Spec.Source
+		}
+		if err := addValidationToJob(newJob, project, image, gitMode, source); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -340,10 +393,14 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 
 	// Job exists — check its status
 	if job.Status.Succeeded > 0 {
-		// Capture outputs from apply logs
-		outputs, err := r.captureOutputs(ctx, job)
-		if err != nil {
-			log.Error(err, "failed to capture outputs from apply job (non-fatal)")
+		// Read job logs for outputs and revision audit
+		jobLogs, logsErr := r.readJobLogs(ctx, job)
+		if logsErr != nil {
+			log.Error(logsErr, "failed to read apply job logs (non-fatal)")
+		}
+		var outputs map[string]string
+		if jobLogs != "" {
+			outputs, _ = parseOutputsFromLogs(jobLogs)
 		}
 		project.Status.Phase = "Succeeded"
 		project.Status.LastAppliedHash = appliedHash
@@ -360,6 +417,8 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 		if outputs != nil {
 			project.Status.Outputs = outputs
 		}
+		// Create revision for audit trail
+		r.createRevisionFromCM(ctx, project, appliedHash, jobName, "succeeded", jobLogs)
 		r.updateStatusWithCondition(ctx, project)
 		sendNotification(ctx, project, "apply:success")
 		return ctrl.Result{}, nil
@@ -375,9 +434,16 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 			r.updateStatusWithCondition(ctx, project)
 			return ctrl.Result{RequeueAfter: delay}, nil
 		}
+		// Read job logs for failure audit
+		failLogs, logsErr := r.readJobLogs(ctx, job)
+		if logsErr != nil {
+			log.Error(logsErr, "failed to read failed job logs (non-fatal)")
+		}
 		project.Status.Phase = "Error"
 		project.Status.LastJobName = jobName
 		project.Status.Message = "Job failed"
+		// Create revision for failed apply audit trail
+		r.createRevisionFromCM(ctx, project, appliedHash, jobName, "failed", failLogs)
 		r.updateStatusWithCondition(ctx, project)
 		sendNotification(ctx, project, "apply:error")
 		return ctrl.Result{}, nil
@@ -469,6 +535,14 @@ func (r *TofuProjectReconciler) ensurePlanJob(ctx context.Context, project *tofu
 	if err := addResourcesToJob(newJob, project); err != nil {
 		return ctrl.Result{}, err
 	}
+	gitMode := isGitSource(program)
+	var source *tofuv1alpha1.GitSource
+	if gitMode {
+		source = program.Spec.Source
+	}
+	if err := addValidationToJob(newJob, project, image, gitMode, source); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -546,6 +620,14 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		if err := addResourcesToJob(newJob, project); err != nil {
 			return ctrl.Result{}, err
 		}
+		gitMode := isGitSource(program)
+		var source *tofuv1alpha1.GitSource
+		if gitMode {
+			source = program.Spec.Source
+		}
+		if err := addValidationToJob(newJob, project, image, gitMode, source); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -566,6 +648,8 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		if err != nil {
 			log.Error(err, "failed to capture outputs from apply job (non-fatal)")
 		}
+		// Preserve plan output for revision before clearing
+		revPlanOutput := project.Status.PlanOutput
 		project.Status.Phase = "Succeeded"
 		project.Status.LastAppliedHash = appliedHash
 		project.Status.LastJobName = jobName
@@ -585,6 +669,8 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		if outputs != nil {
 			project.Status.Outputs = outputs
 		}
+		// Create revision for audit trail (uses preserved plan output)
+		r.createRevisionFromCM(ctx, project, appliedHash, jobName, "succeeded", revPlanOutput)
 		r.updateStatusWithCondition(ctx, project)
 		sendNotification(ctx, project, "apply:success")
 		return requeueAfter(syncInterval), nil
@@ -600,9 +686,16 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 			r.updateStatusWithCondition(ctx, project)
 			return ctrl.Result{RequeueAfter: delay}, nil
 		}
+		// Read job logs for failure audit
+		failLogs, logsErr := r.readJobLogs(ctx, job)
+		if logsErr != nil {
+			log.Error(logsErr, "failed to read failed job logs (non-fatal)")
+		}
 		project.Status.Phase = "Error"
 		project.Status.LastJobName = jobName
 		project.Status.Message = "Apply job failed"
+		// Create revision for failed apply audit trail
+		r.createRevisionFromCM(ctx, project, appliedHash, jobName, "failed", failLogs)
 		r.updateStatusWithCondition(ctx, project)
 		sendNotification(ctx, project, "apply:error")
 		return ctrl.Result{}, nil
@@ -695,6 +788,14 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 		}
 		addEnvToJob(newJob, project)
 		if err := addResourcesToJob(newJob, project); err != nil {
+			return ctrl.Result{}, err
+		}
+		destroyGitMode := programPtr != nil && isGitSource(programPtr)
+		var destroySource *tofuv1alpha1.GitSource
+		if destroyGitMode {
+			destroySource = programPtr.Spec.Source
+		}
+		if err := addValidationToJob(newJob, project, image, destroyGitMode, destroySource); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.Create(ctx, newJob); err != nil {

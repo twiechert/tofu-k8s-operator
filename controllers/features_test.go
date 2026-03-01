@@ -386,7 +386,7 @@ func TestRenderStripProvidersStep(t *testing.T) {
 }
 
 func TestRenderCommandAlwaysStripsBackend(t *testing.T) {
-	cmd := renderCommand("", true, false, nil, false)
+	cmd := renderCommand("", true, false, nil, false, true)
 	backendStep := renderStripBackendStep()
 	if !strings.Contains(cmd, backendStep) {
 		t.Fatal("renderCommand should always include backend strip step")
@@ -394,7 +394,7 @@ func TestRenderCommandAlwaysStripsBackend(t *testing.T) {
 }
 
 func TestRenderCommandWithIgnoreProviders(t *testing.T) {
-	cmd := renderCommand("", true, false, nil, true)
+	cmd := renderCommand("", true, false, nil, true, true)
 	backendStep := renderStripBackendStep()
 	providerStep := renderStripProvidersStep()
 	if !strings.Contains(cmd, backendStep) {
@@ -406,7 +406,7 @@ func TestRenderCommandWithIgnoreProviders(t *testing.T) {
 }
 
 func TestRenderCommandWithoutIgnoreProviders(t *testing.T) {
-	cmd := renderCommand("", true, false, nil, false)
+	cmd := renderCommand("", true, false, nil, false, true)
 	providerStep := renderStripProvidersStep()
 	if strings.Contains(cmd, providerStep) {
 		t.Fatal("renderCommand without ignoreProviders should NOT include provider strip step")
@@ -414,7 +414,7 @@ func TestRenderCommandWithoutIgnoreProviders(t *testing.T) {
 }
 
 func TestRenderPlanCommandWithIgnoreProviders(t *testing.T) {
-	cmd := renderPlanCommand("", false, nil, true)
+	cmd := renderPlanCommand("", false, nil, true, true)
 	providerStep := renderStripProvidersStep()
 	if !strings.Contains(cmd, providerStep) {
 		t.Fatal("renderPlanCommand with ignoreProviders should include provider strip step")
@@ -426,7 +426,7 @@ func TestRenderPlanCommandWithIgnoreProviders(t *testing.T) {
 }
 
 func TestRenderPlanCommandAlwaysStripsBackend(t *testing.T) {
-	cmd := renderPlanCommand("", false, nil, false)
+	cmd := renderPlanCommand("", false, nil, false, true)
 	backendStep := renderStripBackendStep()
 	if !strings.Contains(cmd, backendStep) {
 		t.Fatal("renderPlanCommand should always include backend strip step")
@@ -438,7 +438,7 @@ func TestRenderPlanCommandAlwaysStripsBackend(t *testing.T) {
 }
 
 func TestRenderDestroyCommandWithIgnoreProviders(t *testing.T) {
-	cmd := renderDestroyCommand("", false, nil, true)
+	cmd := renderDestroyCommand("", false, nil, true, true)
 	providerStep := renderStripProvidersStep()
 	if !strings.Contains(cmd, providerStep) {
 		t.Fatal("renderDestroyCommand with ignoreProviders should include provider strip step")
@@ -450,7 +450,7 @@ func TestRenderDestroyCommandWithIgnoreProviders(t *testing.T) {
 }
 
 func TestRenderDestroyCommandAlwaysStripsBackend(t *testing.T) {
-	cmd := renderDestroyCommand("", false, nil, false)
+	cmd := renderDestroyCommand("", false, nil, false, true)
 	backendStep := renderStripBackendStep()
 	if !strings.Contains(cmd, backendStep) {
 		t.Fatal("renderDestroyCommand should always include backend strip step")

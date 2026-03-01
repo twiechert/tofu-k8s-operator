@@ -20,6 +20,28 @@ type KubernetesBackendSpec struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
+// BackendSpec configures the OpenTofu state backend.
+// Type selects the backend: "kubernetes" (default) or "s3".
+type BackendSpec struct {
+	// type: "kubernetes" (default) or "s3"
+	Type string `json:"type,omitempty"`
+
+	// Inline kubernetes fields for backward compatibility
+	KubernetesBackendSpec `json:",inline"`
+
+	// s3 backend config (required when type is "s3")
+	S3 *S3BackendSpec `json:"s3,omitempty"`
+}
+
+type S3BackendSpec struct {
+	// bucket name (required)
+	Bucket string `json:"bucket"`
+	// region (required)
+	Region string `json:"region"`
+	// key override (default: <namespace>/<project-name>/terraform.tfstate)
+	Key string `json:"key,omitempty"`
+}
+
 type ProjectDependency struct {
 	ProjectRef ObjectRef         `json:"projectRef"`
 	Outputs    map[string]string `json:"outputs"` // upstream output name → downstream param name
@@ -79,6 +101,22 @@ type WebhookNotification struct {
 	Events []string `json:"events"` // "apply:success", "apply:error", "drift:detected", "plan:complete"
 }
 
+type ValidationSpec struct {
+	TofuValidate *bool            `json:"tofuValidate,omitempty"`
+	Steps        []ValidationStep `json:"steps,omitempty"`
+}
+
+type ValidationStep struct {
+	Name     string                `json:"name"`
+	Standard string                `json:"standard,omitempty"`
+	Custom   *CustomValidationStep `json:"custom,omitempty"`
+}
+
+type CustomValidationStep struct {
+	Command string `json:"command"`
+	Image   string `json:"image,omitempty"`
+}
+
 type TofuProjectSpec struct {
 	ProgramRef ObjectRef `json:"programRef"`
 
@@ -100,8 +138,8 @@ type TofuProjectSpec struct {
 	// serviceAccount configures the ServiceAccount used by tofu Jobs
 	ServiceAccount *ServiceAccountSpec `json:"serviceAccount,omitempty"`
 
-	// backend config for kubernetes state backend
-	Backend KubernetesBackendSpec `json:"backend,omitempty"`
+	// backend config for state backend (kubernetes or s3)
+	Backend BackendSpec `json:"backend,omitempty"`
 
 	// autoApprove passes -auto-approve to apply
 	AutoApprove bool `json:"autoApprove,omitempty"`
@@ -149,17 +187,27 @@ type TofuProjectSpec struct {
 	// notifications configures webhook notifications for lifecycle events.
 	Notifications *NotificationSpec `json:"notifications,omitempty"`
 
+	// validation configures pre-apply validation (tofu validate + optional tool steps).
+	Validation *ValidationSpec `json:"validation,omitempty"`
+
 	// ignoreProviders strips all provider blocks from source .tf files.
 	IgnoreProviders bool `json:"ignoreProviders,omitempty"`
 
 	// additionalProvidersHCL is raw HCL written as additional-providers.tf for custom provider config.
 	AdditionalProvidersHCL string `json:"additionalProvidersHCL,omitempty"`
+
+	// revisionHistoryLimit is the maximum number of revision ConfigMaps to retain. Default: 10. 0 = keep all.
+	RevisionHistoryLimit *int32 `json:"revisionHistoryLimit,omitempty"`
+
+	// pinnedRevision pins the project to a stored revision for rollback. 0 = normal flow.
+	PinnedRevision int32 `json:"pinnedRevision,omitempty"`
 }
 
 type TofuProjectStatus struct {
 	ObservedGeneration int64  `json:"observedGeneration,omitempty"`
 	LastJobName        string `json:"lastJobName,omitempty"`
 	LastAppliedHash    string `json:"lastAppliedHash,omitempty"`
+	Revision           int32  `json:"revision,omitempty"`
 	Phase              string `json:"phase,omitempty"`
 	Message            string `json:"message,omitempty"`
 	SyncStatus         string `json:"syncStatus,omitempty"` // 'sync' or 'not in sync'
@@ -253,6 +301,10 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 			}
 		}
 	}
+	if in.Spec.Backend.S3 != nil {
+		s3Copy := *in.Spec.Backend.S3
+		out.Spec.Backend.S3 = &s3Copy
+	}
 	if in.Spec.ApplyImmediately != nil {
 		val := *in.Spec.ApplyImmediately
 		out.Spec.ApplyImmediately = &val
@@ -307,6 +359,24 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 		ddCopy := *in.Spec.DriftDetection
 		out.Spec.DriftDetection = &ddCopy
 	}
+	if in.Spec.Validation != nil {
+		vCopy := ValidationSpec{}
+		if in.Spec.Validation.TofuValidate != nil {
+			val := *in.Spec.Validation.TofuValidate
+			vCopy.TofuValidate = &val
+		}
+		if in.Spec.Validation.Steps != nil {
+			vCopy.Steps = make([]ValidationStep, len(in.Spec.Validation.Steps))
+			for i, s := range in.Spec.Validation.Steps {
+				vCopy.Steps[i] = ValidationStep{Name: s.Name, Standard: s.Standard}
+				if s.Custom != nil {
+					cCopy := *s.Custom
+					vCopy.Steps[i].Custom = &cCopy
+				}
+			}
+		}
+		out.Spec.Validation = &vCopy
+	}
 	if in.Spec.Notifications != nil {
 		nCopy := NotificationSpec{}
 		if in.Spec.Notifications.Webhooks != nil {
@@ -320,6 +390,10 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 			}
 		}
 		out.Spec.Notifications = &nCopy
+	}
+	if in.Spec.RevisionHistoryLimit != nil {
+		val := *in.Spec.RevisionHistoryLimit
+		out.Spec.RevisionHistoryLimit = &val
 	}
 	if in.Status.LastDriftCheckTime != nil {
 		t := *in.Status.LastDriftCheckTime
