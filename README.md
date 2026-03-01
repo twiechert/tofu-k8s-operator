@@ -3,7 +3,7 @@
   <br/>
   <strong>OpenTofu Kubernetes Operator</strong>
   <br/>
-  <em>A Kubernetes operator written in Go that lets you run OpenTofu declaratively using Custom Resources.</em>
+  <em>A Kubernetes operator that runs OpenTofu/Terraform declaratively via CRDs — plan/approve workflows, drift detection, rollback, and GitOps-native infrastructure management.</em>
 </p>
 
 <p align="center">
@@ -13,6 +13,26 @@
   <a href="https://goreportcard.com/report/github.com/twiechert/tofu-k8s-operator"><img src="https://goreportcard.com/badge/github.com/twiechert/tofu-k8s-operator" alt="Go Report Card"></a>
   <a href="https://github.com/twiechert/tofu-k8s-operator/blob/main/LICENSE"><img src="https://img.shields.io/github/license/twiechert/tofu-k8s-operator" alt="License"></a>
 </p>
+
+Manage cloud infrastructure directly from Kubernetes. Define your OpenTofu/Terraform code and variables as Custom Resources, and the operator handles planning, approval, applying, drift detection, and rollback — fully GitOps-compatible with ArgoCD and Flux.
+
+## How It Works
+
+```
+TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
+        │                                │
+        └──────────┬─────────────────────┘
+                   ▼
+         Operator renders .tf files into a ConfigMap
+                   ▼
+         Kubernetes Job runs `tofu plan` / `tofu apply`
+                   ▼
+         State stored in Kubernetes Secrets, outputs written to status
+```
+
+1. **`TofuProgram`** — define your infrastructure code (inline HCL or a git repo) and provider requirements
+2. **`TofuProject`** — bind a program to an environment with parameters, approval settings, and scheduling
+3. **The operator** — renders config, runs Jobs, tracks state, detects drift, and stores revision history
 
 ## Features
 
