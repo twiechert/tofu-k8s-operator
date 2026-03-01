@@ -229,6 +229,18 @@ spec:
                         type: object
                         properties:
                           name: {type: string}
+                extraVolumes:
+                  type: array
+                  description: "Extra volumes added to tofu Job pods"
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                extraVolumeMounts:
+                  type: array
+                  description: "Extra volume mounts added to the tofu container"
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                 resources:
                   type: object
                   description: "Resource requests/limits for tofu Job containers"

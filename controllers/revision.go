@@ -281,6 +281,7 @@ func (r *TofuProjectReconciler) reconcilePinned(ctx context.Context, project *to
 			addCacheToJob(newJob, cachePVCName)
 		}
 		addEnvToJob(newJob, project)
+		addExtraVolumesToJob(newJob, project)
 		if err := addResourcesToJob(newJob, project); err != nil {
 			return ctrl.Result{}, err
 		}

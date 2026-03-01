@@ -100,6 +100,7 @@ func (r *TofuProjectReconciler) reconcileDriftDetection(ctx context.Context, pro
 		addCacheToJob(newJob, cachePVCName)
 	}
 	addEnvToJob(newJob, project)
+	addExtraVolumesToJob(newJob, project)
 	if err := addResourcesToJob(newJob, project); err != nil {
 		return ctrl.Result{}, err
 	}

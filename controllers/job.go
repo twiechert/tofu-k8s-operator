@@ -458,6 +458,22 @@ func addEnvToJob(job *batchv1.Job, project *tofuv1alpha1.TofuProject) {
 	}
 }
 
+// addExtraVolumesToJob appends user-specified extra volumes and volume mounts to a Job.
+func addExtraVolumesToJob(job *batchv1.Job, project *tofuv1alpha1.TofuProject) {
+	if len(project.Spec.ExtraVolumes) > 0 {
+		job.Spec.Template.Spec.Volumes = append(
+			job.Spec.Template.Spec.Volumes,
+			project.Spec.ExtraVolumes...,
+		)
+	}
+	if len(project.Spec.ExtraVolumeMounts) > 0 {
+		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+			job.Spec.Template.Spec.Containers[0].VolumeMounts,
+			project.Spec.ExtraVolumeMounts...,
+		)
+	}
+}
+
 // addResourcesToJob sets resource requests/limits on the first container of a Job.
 func addResourcesToJob(job *batchv1.Job, project *tofuv1alpha1.TofuProject) error {
 	if project.Spec.Resources == nil {

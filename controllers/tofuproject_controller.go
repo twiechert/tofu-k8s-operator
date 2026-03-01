@@ -367,6 +367,7 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 			addCacheToJob(newJob, cachePVCName)
 		}
 		addEnvToJob(newJob, project)
+		addExtraVolumesToJob(newJob, project)
 		if err := addResourcesToJob(newJob, project); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -532,6 +533,7 @@ func (r *TofuProjectReconciler) ensurePlanJob(ctx context.Context, project *tofu
 		addCacheToJob(newJob, cachePVCName)
 	}
 	addEnvToJob(newJob, project)
+	addExtraVolumesToJob(newJob, project)
 	if err := addResourcesToJob(newJob, project); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -617,6 +619,7 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 			addCacheToJob(newJob, cachePVCName)
 		}
 		addEnvToJob(newJob, project)
+		addExtraVolumesToJob(newJob, project)
 		if err := addResourcesToJob(newJob, project); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -787,6 +790,7 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 			addCacheToJob(newJob, pvcName)
 		}
 		addEnvToJob(newJob, project)
+		addExtraVolumesToJob(newJob, project)
 		if err := addResourcesToJob(newJob, project); err != nil {
 			return ctrl.Result{}, err
 		}

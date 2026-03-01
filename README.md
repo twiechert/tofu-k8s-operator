@@ -53,6 +53,7 @@ TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
 - Leader election for HA deployments
 - Job locking — one Job per project at a time
 - Custom environment variables — inject env vars and envFrom into tofu Jobs
+- [Extra volumes](doc/extra-volumes.md) — mount ConfigMaps, Secrets, PVCs, or image volumes into tofu Jobs
 - Resource limits — set CPU/memory requests and limits on Job containers
 - Retry policy — automatically retry failed Jobs with configurable delay
 - Drift detection — periodic plan-only jobs to detect infrastructure drift
@@ -76,6 +77,26 @@ Raw manifests:
 ```bash
 kubectl apply -k deploy/
 ```
+
+### kubectl Plugin
+
+Install the `kubectl tofu` plugin for plan inspection, approval, suspend/resume, and revision management:
+
+```bash
+# Build and copy to PATH
+just build-plugin
+cp bin/kubectl-tofu /usr/local/bin/
+
+# Or install directly via go install
+just install-plugin
+```
+
+Verify it works:
+```bash
+kubectl tofu --help
+```
+
+See [kubectl Plugin](doc/kubectl-plugin.md) for the full command reference.
 
 ### CRDs
 
@@ -183,6 +204,7 @@ spec:
 | [Delete Protection](doc/delete-protection.md) | Prevent accidental infrastructure destruction |
 | [kubectl Plugin](doc/kubectl-plugin.md) | CLI for plan, approve, delete, suspend, resume |
 | [Environment Variables](doc/env-vars.md) | Inject env vars and envFrom into tofu Jobs |
+| [Extra Volumes](doc/extra-volumes.md) | Mount ConfigMaps, Secrets, PVCs, or image volumes into tofu Jobs |
 | [Resource Limits](doc/resource-limits.md) | Set CPU/memory requests and limits on Job containers |
 | [Retry Policy](doc/retry-policy.md) | Automatically retry failed Jobs with configurable delay |
 | [Drift Detection](doc/drift-detection.md) | Periodic plan-only jobs to detect infrastructure drift |

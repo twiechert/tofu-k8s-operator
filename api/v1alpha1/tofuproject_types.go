@@ -196,6 +196,12 @@ type TofuProjectSpec struct {
 	// additionalProvidersHCL is raw HCL written as additional-providers.tf for custom provider config.
 	AdditionalProvidersHCL string `json:"additionalProvidersHCL,omitempty"`
 
+	// extraVolumes are additional volumes added to tofu Job pods.
+	ExtraVolumes []corev1.Volume `json:"extraVolumes,omitempty"`
+
+	// extraVolumeMounts are additional volume mounts added to the tofu container.
+	ExtraVolumeMounts []corev1.VolumeMount `json:"extraVolumeMounts,omitempty"`
+
 	// revisionHistoryLimit is the maximum number of revision ConfigMaps to retain. Default: 10. 0 = keep all.
 	RevisionHistoryLimit *int32 `json:"revisionHistoryLimit,omitempty"`
 
@@ -334,6 +340,18 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 		var envFromCopy []corev1.EnvFromSource
 		_ = json.Unmarshal(data, &envFromCopy)
 		out.Spec.EnvFrom = envFromCopy
+	}
+	if in.Spec.ExtraVolumes != nil {
+		data, _ := json.Marshal(in.Spec.ExtraVolumes)
+		var volCopy []corev1.Volume
+		_ = json.Unmarshal(data, &volCopy)
+		out.Spec.ExtraVolumes = volCopy
+	}
+	if in.Spec.ExtraVolumeMounts != nil {
+		data, _ := json.Marshal(in.Spec.ExtraVolumeMounts)
+		var mountCopy []corev1.VolumeMount
+		_ = json.Unmarshal(data, &mountCopy)
+		out.Spec.ExtraVolumeMounts = mountCopy
 	}
 	if in.Spec.Resources != nil {
 		resCopy := ResourceRequirements{}

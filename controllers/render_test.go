@@ -618,6 +618,131 @@ func TestTofuValidateEnabled(t *testing.T) {
 
 // --- Tests for addValidationToJob ---
 
+// --- Tests for extra volumes injection ---
+
+func TestAddExtraVolumesToJob(t *testing.T) {
+	project := fakeProject("test")
+	project.Spec.ExtraVolumes = []corev1.Volume{{
+		Name: "policy-files",
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "opa-policies"},
+			},
+		},
+	}}
+	project.Spec.ExtraVolumeMounts = []corev1.VolumeMount{{
+		Name:      "policy-files",
+		MountPath: "/policies",
+		ReadOnly:  true,
+	}}
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{ProgramHCL: "resource {}"},
+	}
+	job := buildJob(project, "test-apply", "test-tf", "opentofu:latest", program, "tofu-runner")
+	addExtraVolumesToJob(job, &project)
+
+	// Check volume was appended
+	foundVolume := false
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		if v.Name == "policy-files" && v.ConfigMap != nil && v.ConfigMap.Name == "opa-policies" {
+			foundVolume = true
+			break
+		}
+	}
+	if !foundVolume {
+		t.Fatal("expected policy-files ConfigMap volume")
+	}
+
+	// Check mount was appended
+	foundMount := false
+	for _, m := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if m.Name == "policy-files" && m.MountPath == "/policies" && m.ReadOnly {
+			foundMount = true
+			break
+		}
+	}
+	if !foundMount {
+		t.Fatal("expected policy-files volume mount at /policies")
+	}
+}
+
+func TestAddExtraVolumesToJob_Empty(t *testing.T) {
+	project := fakeProject("test")
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{ProgramHCL: "resource {}"},
+	}
+	job := buildJob(project, "test-apply", "test-tf", "opentofu:latest", program, "tofu-runner")
+	volsBefore := len(job.Spec.Template.Spec.Volumes)
+	mountsBefore := len(job.Spec.Template.Spec.Containers[0].VolumeMounts)
+
+	addExtraVolumesToJob(job, &project)
+
+	if len(job.Spec.Template.Spec.Volumes) != volsBefore {
+		t.Fatal("expected no volumes added when extraVolumes is empty")
+	}
+	if len(job.Spec.Template.Spec.Containers[0].VolumeMounts) != mountsBefore {
+		t.Fatal("expected no mounts added when extraVolumeMounts is empty")
+	}
+}
+
+func TestAddExtraVolumesToJob_PreservesExisting(t *testing.T) {
+	project := fakeProject("test")
+	project.Spec.ExtraVolumes = []corev1.Volume{{
+		Name: "custom-secret",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: "my-secret"},
+		},
+	}}
+	project.Spec.ExtraVolumeMounts = []corev1.VolumeMount{{
+		Name:      "custom-secret",
+		MountPath: "/secrets",
+		ReadOnly:  true,
+	}}
+	program := &tofuv1alpha1.TofuProgram{
+		Spec: tofuv1alpha1.TofuProgramSpec{ProgramHCL: "resource {}"},
+	}
+	job := buildJob(project, "test-apply", "test-tf", "opentofu:latest", program, "tofu-runner")
+	addExtraVolumesToJob(job, &project)
+
+	// Verify built-in volumes (tf-config, work) are still present
+	builtinVolumes := map[string]bool{"tf-config": false, "work": false}
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		if _, ok := builtinVolumes[v.Name]; ok {
+			builtinVolumes[v.Name] = true
+		}
+	}
+	for name, found := range builtinVolumes {
+		if !found {
+			t.Fatalf("built-in volume %q was lost after adding extra volumes", name)
+		}
+	}
+
+	// Verify built-in mounts are still present
+	builtinMounts := map[string]bool{"tf-config": false, "work": false}
+	for _, m := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if _, ok := builtinMounts[m.Name]; ok {
+			builtinMounts[m.Name] = true
+		}
+	}
+	for name, found := range builtinMounts {
+		if !found {
+			t.Fatalf("built-in mount %q was lost after adding extra volumes", name)
+		}
+	}
+
+	// Verify extra volume/mount is also present
+	foundExtra := false
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		if v.Name == "custom-secret" {
+			foundExtra = true
+			break
+		}
+	}
+	if !foundExtra {
+		t.Fatal("expected custom-secret volume to be appended")
+	}
+}
+
 func TestAddValidationToJob_StandardTflint(t *testing.T) {
 	project := fakeProject("test")
 	project.Spec.Validation = &tofuv1alpha1.ValidationSpec{
