@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +29,8 @@ var tofuProjectGVR = schema.GroupVersionResource{
 	Resource: "tofuprojects",
 }
 
+var pluginBin string
+
 const tofuProgramYAML = `
 apiVersion: tofu.example.com/v1alpha1
 kind: TofuProgram
@@ -47,6 +50,105 @@ spec:
       value = random_pet.name.id
     }
 `
+
+const featuresProgramYAML = `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: features-test
+  namespace: default
+spec:
+  providers:
+    - name: random
+      source: "hashicorp/random"
+      version: "~> 3.6"
+  programHCL: |
+    resource "random_pet" "name" {
+      length = 2
+    }
+    output "pet_name" {
+      value = random_pet.name.id
+    }
+`
+
+const paramFromProgramYAML = `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProgram
+metadata:
+  name: param-test-prog
+  namespace: default
+spec:
+  providers:
+    - name: random
+      source: "hashicorp/random"
+      version: "~> 3.6"
+  programHCL: |
+    variable "seed" {
+      type    = string
+      default = "default"
+    }
+    resource "random_pet" "name" {
+      keepers = {
+        seed = var.seed
+      }
+    }
+    output "pet_name" {
+      value = random_pet.name.id
+    }
+`
+
+func TestMain(m *testing.M) {
+	// Deploy operator once
+	if out, err := kubectlMayFail("apply", "-k", "../../deploy/"); err != nil {
+		fmt.Fprintf(os.Stderr, "deploy failed: %v\n%s", err, out)
+		os.Exit(1)
+	}
+	if out, err := kubectlMayFail("-n", "tofu-system", "wait", "--for=condition=Ready",
+		"pod", "-l", "app=tofu-k8s-operator", "--timeout=120s"); err != nil {
+		fmt.Fprintf(os.Stderr, "operator not ready: %v\n%s", err, out)
+		os.Exit(1)
+	}
+
+	// Create shared programs
+	for _, y := range []string{tofuProgramYAML, featuresProgramYAML, paramFromProgramYAML} {
+		if err := applyYAMLDirect(y); err != nil {
+			fmt.Fprintf(os.Stderr, "shared program apply failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Build plugin binary once
+	buildCmd := exec.CommandContext(context.Background(), "go", "build", "-o", "../../bin/kubectl-tofu", "../../cmd/kubectl-tofu/")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "plugin build failed: %v\n%s", err, out)
+		os.Exit(1)
+	}
+	pluginBin, _ = filepath.Abs("../../bin/kubectl-tofu")
+
+	code := m.Run()
+
+	// Cleanup shared programs
+	for _, y := range []string{tofuProgramYAML, featuresProgramYAML, paramFromProgramYAML} {
+		deleteYAMLDirect(y)
+	}
+	os.Exit(code)
+}
+
+func applyYAMLDirect(yaml string) error {
+	cmd := exec.CommandContext(context.Background(), "kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(yaml)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("kubectl apply failed: %v\n%s", err, out)
+	}
+	return nil
+}
+
+func deleteYAMLDirect(yaml string) {
+	cmd := exec.CommandContext(context.Background(), "kubectl", "delete", "--ignore-not-found", "-f", "-")
+	cmd.Stdin = strings.NewReader(yaml)
+	_, _ = cmd.CombinedOutput()
+}
 
 func getKubeConfig(t *testing.T) *rest.Config {
 	t.Helper()
@@ -125,12 +227,6 @@ func kubectlMayFail(args ...string) (string, error) {
 	return string(out), err
 }
 
-func deployOperator(t *testing.T) {
-	t.Helper()
-	kubectl(t, "apply", "-k", "../../deploy/")
-	kubectl(t, "-n", "tofu-system", "wait", "--for=condition=Ready", "pod", "-l", "app=tofu-k8s-operator", "--timeout=60s")
-}
-
 func applyYAML(t *testing.T, yaml string) {
 	t.Helper()
 	cmd := exec.CommandContext(context.Background(), "kubectl", "apply", "-f", "-")
@@ -171,7 +267,7 @@ func waitForPhase(t *testing.T, dynClient dynamic.Interface, ns, name, phase str
 				return
 			}
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
 }
 
@@ -187,7 +283,7 @@ func waitForJobWithLabel(t *testing.T, ns, labelSelector string, timeout time.Du
 		if strings.TrimSpace(string(out)) != "" {
 			return
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
 }
 
@@ -242,17 +338,6 @@ func waitForReadyCondition(t *testing.T, dynClient dynamic.Interface, ns, name, 
 		if s == expectedStatus {
 			return
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
-}
-
-// buildPluginBinary compiles the kubectl-tofu plugin and returns the absolute path.
-func buildPluginBinary(t *testing.T) string {
-	t.Helper()
-	buildCmd := exec.CommandContext(context.Background(), "go", "build", "-o", "../../bin/kubectl-tofu", "../../cmd/kubectl-tofu/")
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("failed to build kubectl-tofu: %v\n%s", err, out)
-	}
-	pluginBin, _ := filepath.Abs("../../bin/kubectl-tofu")
-	return pluginBin
 }

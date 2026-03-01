@@ -16,14 +16,8 @@ import (
 )
 
 func TestKubectlPlugin(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	pluginBin := buildPluginBinary(t)
-
-	// Apply program
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	// Create a project for plugin testing
 	pluginProject := `
@@ -62,7 +56,7 @@ spec:
 	}
 
 	// Verify no longer Suspended
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 	obj, err := dynClient.Resource(tofuProjectGVR).Namespace("default").Get(context.Background(), "plugin-test", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("failed to get plugin-test: %v", err)
@@ -75,13 +69,8 @@ spec:
 }
 
 func TestKubectlPluginDelete(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	pluginBin := buildPluginBinary(t)
-
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	// Create project with delete protection
 	project := `

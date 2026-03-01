@@ -14,11 +14,8 @@ import (
 )
 
 func TestDeleteProtection(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	project := `
 apiVersion: tofu.example.com/v1alpha1
@@ -85,11 +82,8 @@ spec:
 }
 
 func TestDeleteWithoutProtection(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	project := `
 apiVersion: tofu.example.com/v1alpha1

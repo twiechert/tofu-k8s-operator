@@ -15,12 +15,8 @@ import (
 )
 
 func TestPlanApproveFlow(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	// Apply the program
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	// Create project with autoApprove=false
 	planProject := `

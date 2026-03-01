@@ -39,7 +39,7 @@ func TestRenderBackendTF(t *testing.T) {
 }
 
 func TestRenderCommand(t *testing.T) {
-	cmd := renderCommand("dev", true, false, nil)
+	cmd := renderCommand("dev", true, false, nil, false)
 	if !strings.Contains(cmd, "workspace") {
 		t.Fatal("workspace logic missing")
 	}
@@ -52,7 +52,7 @@ func TestRenderCommand(t *testing.T) {
 }
 
 func TestRenderDestroyCommand(t *testing.T) {
-	cmd := renderDestroyCommand("dev", false, nil)
+	cmd := renderDestroyCommand("dev", false, nil, false)
 	if !strings.Contains(cmd, "workspace") {
 		t.Fatal("workspace logic missing")
 	}
@@ -65,7 +65,7 @@ func TestRenderDestroyCommand(t *testing.T) {
 }
 
 func TestRenderDestroyCommandNoWorkspace(t *testing.T) {
-	cmd := renderDestroyCommand("", false, nil)
+	cmd := renderDestroyCommand("", false, nil, false)
 	if strings.Contains(cmd, "workspace") {
 		t.Fatal("unexpected workspace logic")
 	}
@@ -76,7 +76,7 @@ func TestRenderDestroyCommandNoWorkspace(t *testing.T) {
 
 func TestRenderCommandGitSource(t *testing.T) {
 	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git"}
-	cmd := renderCommand("", true, true, src)
+	cmd := renderCommand("", true, true, src, false)
 	if !strings.Contains(cmd, "cp -r /git-repo/./. /work/") {
 		t.Fatal("expected git-repo copy step")
 	}
@@ -90,7 +90,7 @@ func TestRenderCommandGitSource(t *testing.T) {
 
 func TestRenderCommandGitSourceSubpath(t *testing.T) {
 	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git", Path: "infra/prod"}
-	cmd := renderCommand("staging", true, true, src)
+	cmd := renderCommand("staging", true, true, src, false)
 	if !strings.Contains(cmd, "cp -r /git-repo/infra/prod/. /work/") {
 		t.Fatal("expected subpath copy step")
 	}
@@ -104,7 +104,7 @@ func TestRenderCommandGitSourceSubpath(t *testing.T) {
 
 func TestRenderDestroyCommandGitSource(t *testing.T) {
 	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git", Path: "modules/vpc"}
-	cmd := renderDestroyCommand("prod", true, src)
+	cmd := renderDestroyCommand("prod", true, src, false)
 	if !strings.Contains(cmd, "cp -r /git-repo/modules/vpc/. /work/") {
 		t.Fatal("expected git-repo copy step for destroy")
 	}
@@ -157,7 +157,7 @@ func TestIsGitSource(t *testing.T) {
 // --- New tests for plan-approve flow ---
 
 func TestRenderPlanCommand(t *testing.T) {
-	cmd := renderPlanCommand("dev", false, nil)
+	cmd := renderPlanCommand("dev", false, nil, false)
 	if !strings.Contains(cmd, "workspace") {
 		t.Fatal("workspace logic missing")
 	}
@@ -170,7 +170,7 @@ func TestRenderPlanCommand(t *testing.T) {
 }
 
 func TestRenderPlanCommandNoWorkspace(t *testing.T) {
-	cmd := renderPlanCommand("", false, nil)
+	cmd := renderPlanCommand("", false, nil, false)
 	if strings.Contains(cmd, "workspace") {
 		t.Fatal("unexpected workspace logic")
 	}
@@ -181,7 +181,7 @@ func TestRenderPlanCommandNoWorkspace(t *testing.T) {
 
 func TestRenderPlanCommandGitSource(t *testing.T) {
 	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git", Path: "infra"}
-	cmd := renderPlanCommand("staging", true, src)
+	cmd := renderPlanCommand("staging", true, src, false)
 	if !strings.Contains(cmd, "cp -r /git-repo/infra/. /work/") {
 		t.Fatal("expected git-repo copy step")
 	}
@@ -326,7 +326,7 @@ func TestParseSyncInterval(t *testing.T) {
 // --- Tests for output marker in render commands ---
 
 func TestRenderCommandIncludesOutputMarker(t *testing.T) {
-	cmd := renderCommand("", true, false, nil)
+	cmd := renderCommand("", true, false, nil, false)
 	if !strings.Contains(cmd, outputMarker) {
 		t.Fatal("apply command should include output marker")
 	}
@@ -336,7 +336,7 @@ func TestRenderCommandIncludesOutputMarker(t *testing.T) {
 }
 
 func TestRenderPlanCommandNoOutputMarker(t *testing.T) {
-	cmd := renderPlanCommand("", false, nil)
+	cmd := renderPlanCommand("", false, nil, false)
 	if strings.Contains(cmd, outputMarker) {
 		t.Fatal("plan command should NOT include output marker")
 	}
@@ -346,7 +346,7 @@ func TestRenderPlanCommandNoOutputMarker(t *testing.T) {
 }
 
 func TestRenderDestroyCommandNoOutputMarker(t *testing.T) {
-	cmd := renderDestroyCommand("", false, nil)
+	cmd := renderDestroyCommand("", false, nil, false)
 	if strings.Contains(cmd, outputMarker) {
 		t.Fatal("destroy command should NOT include output marker")
 	}
