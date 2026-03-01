@@ -1,6 +1,9 @@
 package v1alpha1
 
 import (
+	"encoding/json"
+
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -50,6 +53,30 @@ type ServiceAccountSpec struct {
 	Name string `json:"name,omitempty"`
 	// annotations added to the auto-created ServiceAccount (e.g. for IRSA/workload identity)
 	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+type ResourceRequirements struct {
+	Limits   map[string]string `json:"limits,omitempty"`
+	Requests map[string]string `json:"requests,omitempty"`
+}
+
+type RetryPolicy struct {
+	MaxRetries int32  `json:"maxRetries"`
+	Delay      string `json:"delay,omitempty"` // e.g. "30s", "1m"
+}
+
+type DriftDetectionSpec struct {
+	Enabled  bool   `json:"enabled"`
+	Interval string `json:"interval,omitempty"` // e.g. "10m", "1h". Default: "15m"
+}
+
+type NotificationSpec struct {
+	Webhooks []WebhookNotification `json:"webhooks,omitempty"`
+}
+
+type WebhookNotification struct {
+	URL    string   `json:"url"`
+	Events []string `json:"events"` // "apply:success", "apply:error", "drift:detected", "plan:complete"
 }
 
 type TofuProjectSpec struct {
@@ -103,6 +130,30 @@ type TofuProjectSpec struct {
 
 	// cache configures provider plugin caching via PVC.
 	Cache *CacheSpec `json:"cache,omitempty"`
+
+	// env are extra environment variables injected into tofu Job containers.
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// envFrom bulk-imports env variables from ConfigMaps/Secrets.
+	EnvFrom []corev1.EnvFromSource `json:"envFrom,omitempty"`
+
+	// resources configures resource requests/limits for tofu Job containers.
+	Resources *ResourceRequirements `json:"resources,omitempty"`
+
+	// retryPolicy configures retry behavior for failed Jobs.
+	RetryPolicy *RetryPolicy `json:"retryPolicy,omitempty"`
+
+	// driftDetection configures periodic drift checking.
+	DriftDetection *DriftDetectionSpec `json:"driftDetection,omitempty"`
+
+	// notifications configures webhook notifications for lifecycle events.
+	Notifications *NotificationSpec `json:"notifications,omitempty"`
+
+	// ignoreProviders strips all provider blocks from source .tf files.
+	IgnoreProviders bool `json:"ignoreProviders,omitempty"`
+
+	// additionalProvidersHCL is raw HCL written as additional-providers.tf for custom provider config.
+	AdditionalProvidersHCL string `json:"additionalProvidersHCL,omitempty"`
 }
 
 type TofuProjectStatus struct {
@@ -118,6 +169,9 @@ type TofuProjectStatus struct {
 	LastPlanJobName    string              `json:"lastPlanJobName,omitempty"`
 	Outputs            map[string]string   `json:"outputs,omitempty"`
 	Conditions         []metav1.Condition  `json:"conditions,omitempty"`
+	RetryCount         int32               `json:"retryCount,omitempty"`
+	LastDriftCheckTime *metav1.Time        `json:"lastDriftCheckTime,omitempty"`
+	DriftDetected      bool                `json:"driftDetected,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -216,6 +270,60 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 	if in.Spec.Cache != nil {
 		cacheCopy := *in.Spec.Cache
 		out.Spec.Cache = &cacheCopy
+	}
+	if in.Spec.Env != nil {
+		data, _ := json.Marshal(in.Spec.Env)
+		var envCopy []corev1.EnvVar
+		_ = json.Unmarshal(data, &envCopy)
+		out.Spec.Env = envCopy
+	}
+	if in.Spec.EnvFrom != nil {
+		data, _ := json.Marshal(in.Spec.EnvFrom)
+		var envFromCopy []corev1.EnvFromSource
+		_ = json.Unmarshal(data, &envFromCopy)
+		out.Spec.EnvFrom = envFromCopy
+	}
+	if in.Spec.Resources != nil {
+		resCopy := ResourceRequirements{}
+		if in.Spec.Resources.Limits != nil {
+			resCopy.Limits = map[string]string{}
+			for k, v := range in.Spec.Resources.Limits {
+				resCopy.Limits[k] = v
+			}
+		}
+		if in.Spec.Resources.Requests != nil {
+			resCopy.Requests = map[string]string{}
+			for k, v := range in.Spec.Resources.Requests {
+				resCopy.Requests[k] = v
+			}
+		}
+		out.Spec.Resources = &resCopy
+	}
+	if in.Spec.RetryPolicy != nil {
+		rpCopy := *in.Spec.RetryPolicy
+		out.Spec.RetryPolicy = &rpCopy
+	}
+	if in.Spec.DriftDetection != nil {
+		ddCopy := *in.Spec.DriftDetection
+		out.Spec.DriftDetection = &ddCopy
+	}
+	if in.Spec.Notifications != nil {
+		nCopy := NotificationSpec{}
+		if in.Spec.Notifications.Webhooks != nil {
+			nCopy.Webhooks = make([]WebhookNotification, len(in.Spec.Notifications.Webhooks))
+			for i, wh := range in.Spec.Notifications.Webhooks {
+				nCopy.Webhooks[i] = WebhookNotification{URL: wh.URL}
+				if wh.Events != nil {
+					nCopy.Webhooks[i].Events = make([]string, len(wh.Events))
+					copy(nCopy.Webhooks[i].Events, wh.Events)
+				}
+			}
+		}
+		out.Spec.Notifications = &nCopy
+	}
+	if in.Status.LastDriftCheckTime != nil {
+		t := *in.Status.LastDriftCheckTime
+		out.Status.LastDriftCheckTime = &t
 	}
 	if in.Status.Outputs != nil {
 		out.Status.Outputs = map[string]string{}

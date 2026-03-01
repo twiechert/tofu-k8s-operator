@@ -9,11 +9,8 @@ import (
 )
 
 func TestApplyImmediatelyDefault(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	project := `
 apiVersion: tofu.example.com/v1alpha1
@@ -45,11 +42,8 @@ spec:
 }
 
 func TestApplyImmediatelyFalse(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	applyYAML(t, tofuProgramYAML)
-	defer deleteYAML(t, tofuProgramYAML)
 
 	// applyImmediately=false → Ready=True immediately (async/fire-and-forget)
 	project := `

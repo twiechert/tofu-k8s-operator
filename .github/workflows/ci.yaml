@@ -9,14 +9,37 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  changes:
     runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Dockerfile'
+              - 'deploy/**'
+              - 'charts/**'
+              - '.github/workflows/ci.yaml'
+
+  test:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
 
       - name: Vet
         run: go vet ./...
@@ -24,21 +47,22 @@ jobs:
       - name: Test
         run: go test ./...
 
-  build:
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Build
-        run: go build -o bin/manager main.go
-
-      - name: Build kubectl plugin
-        run: go build -o bin/kubectl-tofu ./cmd/kubectl-tofu/
-
       - name: Build Docker image
         run: docker build -t tofu-k8s-operator:ci .
+
+  # Required check that always passes — gates PRs when code hasn't changed
+  ci:
+    runs-on: ubuntu-latest
+    needs: [changes, test]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.changes.outputs.code }}" != "true" ]; then
+            echo "No code changes — skipping tests"
+            exit 0
+          fi
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Tests failed"
+            exit 1
+          fi

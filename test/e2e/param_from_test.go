@@ -14,39 +14,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-const paramFromProgramYAML = `
-apiVersion: tofu.example.com/v1alpha1
-kind: TofuProgram
-metadata:
-  name: param-test-prog
-  namespace: default
-spec:
-  providers:
-    - name: random
-      source: "hashicorp/random"
-      version: "~> 3.6"
-  programHCL: |
-    variable "seed" {
-      type    = string
-      default = "default"
-    }
-    resource "random_pet" "name" {
-      keepers = {
-        seed = var.seed
-      }
-    }
-    output "pet_name" {
-      value = random_pet.name.id
-    }
-`
-
 func TestParamFromConfigMap(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
 	clientset := newClientset(t)
-
-	applyYAML(t, paramFromProgramYAML)
-	defer deleteYAML(t, paramFromProgramYAML)
 
 	// Create a ConfigMap with params
 	cmYAML := `
@@ -95,11 +66,8 @@ spec:
 }
 
 func TestParamFromSecret(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	applyYAML(t, paramFromProgramYAML)
-	defer deleteYAML(t, paramFromProgramYAML)
 
 	secretYAML := `
 apiVersion: v1
@@ -137,11 +105,8 @@ spec:
 }
 
 func TestParamBindingsConfigMapKeyRef(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	applyYAML(t, paramFromProgramYAML)
-	defer deleteYAML(t, paramFromProgramYAML)
 
 	cmYAML := `
 apiVersion: v1
@@ -182,11 +147,8 @@ spec:
 }
 
 func TestParamBindingsSecretKeyRef(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
-
-	applyYAML(t, paramFromProgramYAML)
-	defer deleteYAML(t, paramFromProgramYAML)
 
 	secretYAML := `
 apiVersion: v1
@@ -226,12 +188,9 @@ spec:
 }
 
 func TestParamPrecedence(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
 	clientset := newClientset(t)
-
-	applyYAML(t, paramFromProgramYAML)
-	defer deleteYAML(t, paramFromProgramYAML)
 
 	cmYAML := `
 apiVersion: v1
@@ -286,12 +245,9 @@ spec:
 }
 
 func TestParamFromConfigMapWatch(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
 	clientset := newClientset(t)
-
-	applyYAML(t, paramFromProgramYAML)
-	defer deleteYAML(t, paramFromProgramYAML)
 
 	cmYAML := `
 apiVersion: v1
@@ -349,7 +305,7 @@ spec:
 	}
 
 	// Wait for Succeeded again with a different hash
-	time.Sleep(5 * time.Second) // give the watch time to trigger
+	time.Sleep(2 * time.Second) // give the watch time to trigger
 	waitForPhase(t, dynClient, "default", "watch-cm-test", "Succeeded", 120*time.Second)
 
 	obj, err = dynClient.Resource(tofuProjectGVR).Namespace("default").Get(context.Background(), "watch-cm-test", metav1.GetOptions{})
@@ -364,12 +320,9 @@ spec:
 }
 
 func TestParamFromSecretWatch(t *testing.T) {
-	deployOperator(t)
+	t.Parallel()
 	dynClient := newDynamicClient(t)
 	clientset := newClientset(t)
-
-	applyYAML(t, paramFromProgramYAML)
-	defer deleteYAML(t, paramFromProgramYAML)
 
 	secretYAML := `
 apiVersion: v1
@@ -427,7 +380,7 @@ spec:
 	}
 
 	// Wait for Succeeded again with a different hash
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second) // give the watch time to trigger
 	waitForPhase(t, dynClient, "default", "watch-secret-test", "Succeeded", 120*time.Second)
 
 	obj, err = dynClient.Resource(tofuProjectGVR).Namespace("default").Get(context.Background(), "watch-secret-test", metav1.GetOptions{})
@@ -440,4 +393,3 @@ spec:
 		t.Fatalf("expected hash to change after Secret update, still %s", oldHash)
 	}
 }
-
