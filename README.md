@@ -8,6 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/twiechert/tofu-k8s-operator/actions/workflows/ci.yaml"><img src="https://github.com/twiechert/tofu-k8s-operator/actions/workflows/ci.yaml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/twiechert/tofu-k8s-operator/actions/workflows/e2e.yaml"><img src="https://github.com/twiechert/tofu-k8s-operator/actions/workflows/e2e.yaml/badge.svg" alt="E2E"></a>
   <a href="https://github.com/twiechert/tofu-k8s-operator/releases/latest"><img src="https://img.shields.io/github/v/release/twiechert/tofu-k8s-operator" alt="Release"></a>
   <a href="https://goreportcard.com/report/github.com/twiechert/tofu-k8s-operator"><img src="https://goreportcard.com/badge/github.com/twiechert/tofu-k8s-operator" alt="Go Report Card"></a>
   <a href="https://github.com/twiechert/tofu-k8s-operator/blob/main/LICENSE"><img src="https://img.shields.io/github/license/twiechert/tofu-k8s-operator" alt="License"></a>
