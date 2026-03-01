@@ -14,7 +14,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dorny/paths-filter@v3
         id: filter
@@ -34,7 +34,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6
         with:
