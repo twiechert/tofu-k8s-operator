@@ -40,7 +40,7 @@ TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
 - Declarative OpenTofu execution via CRDs
 - Kubernetes backend for state (Secrets)
 - Reusable programs (`TofuProgram`) — inline HCL or [git sources](doc/git-sources.md)
-- Parameterized runs (`TofuProject`) — inline, `paramFrom` (bulk ConfigMap/Secret), and `paramBindings` (individual key refs)
+- Parameterized runs (`TofuProject`) — inline, `valuesFrom` (ordered layering), `paramFrom` (bulk ConfigMap/Secret), and `paramBindings` (individual key refs)
 - Drift-safe: new Job created when inputs change (including ConfigMap/Secret watches)
 - [Cross-project output dependencies](doc/dependencies.md)
 - [Provider plugin cache](doc/provider-cache.md) via PVC
@@ -65,6 +65,7 @@ TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
 - [Revision history & pinned revisions](doc/revisions.md) — audit trail of every apply, rollback to any stored revision
 - [Scheduled apply windows](doc/scheduled-apply.md) — gate when approved plans are applied using cron-based maintenance windows
 - [Revision diff](doc/kubectl-plugin.md) — compare two stored revisions to see what changed between applies
+- [TTL auto-deletion](doc/ttl.md) — automatically delete projects after a configured duration
 
 ## Quick Start
 
@@ -202,7 +203,7 @@ spec:
 |-------|-------------|
 | [Git Sources](doc/git-sources.md) | Using git repositories instead of inline HCL, private repo auth |
 | [Plan-Then-Approve](doc/plan-approve.md) | Review `tofu plan` output before applying |
-| [External Params](doc/external-params.md) | Import params from ConfigMaps/Secrets via `paramFrom` and `paramBindings` |
+| [External Params](doc/external-params.md) | Import params from ConfigMaps/Secrets via `valuesFrom`, `paramFrom`, and `paramBindings` |
 | [Cross-Project Dependencies](doc/dependencies.md) | Consume outputs from upstream projects as input params |
 | [Provider Plugin Cache](doc/provider-cache.md) | Cache providers via PVC to speed up `tofu init` |
 | [Delete Protection](doc/delete-protection.md) | Prevent accidental infrastructure destruction |
@@ -218,6 +219,7 @@ spec:
 | [Blast Radius](doc/blast-radius.md) | Blast radius tracking and conditional auto-approve by threshold |
 | [Revision History](doc/revisions.md) | Audit trail of every apply, rollback to any stored revision |
 | [Scheduled Apply](doc/scheduled-apply.md) | Gate applies behind cron-based maintenance windows |
+| [TTL Auto-Deletion](doc/ttl.md) | Automatically delete projects after a configured duration |
 | [Examples](doc/examples.md) | AWS S3 bucket example and more |
 
 ## Build & Test
