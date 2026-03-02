@@ -163,101 +163,30 @@ func (r *TofuProjectReconciler) createRevisionFromCM(ctx context.Context, projec
 // It reads the stored revision ConfigMap, overwrites the project's -tf ConfigMap
 // with the snapshot data, and runs a simplified auto-approve apply.
 func (r *TofuProjectReconciler) reconcilePinned(ctx context.Context, project *tofuv1alpha1.TofuProject) (ctrl.Result, error) {
-	log := ctrl.LoggerFrom(ctx)
 	revNum := project.Spec.PinnedRevision
 
-	// Read the revision ConfigMap
-	revCMName := fmt.Sprintf("%s-rev-%d", project.Name, revNum)
-	var revCM corev1.ConfigMap
-	if err := r.Get(ctx, types.NamespacedName{Name: revCMName, Namespace: project.Namespace}, &revCM); err != nil {
-		if apierrors.IsNotFound(err) {
-			project.Status.Phase = "Error"
-			project.Status.Message = fmt.Sprintf("Pinned revision %d not found (ConfigMap %s)", revNum, revCMName)
-			r.updateStatusWithCondition(ctx, project)
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
+	snapshotData, pinnedHash, result, err := r.loadPinnedSnapshot(ctx, project, revNum)
+	if err != nil || snapshotData == nil {
+		return result, err
 	}
 
-	storedHash := revCM.Data["appliedHash"]
-	pinnedHash := computePinnedHash(revNum, storedHash)
-
-	// Already applied this pinned revision
 	if project.Status.LastAppliedHash == pinnedHash {
 		return ctrl.Result{}, nil
 	}
 
-	// Extract snapshot data from the revision CM
-	snapshotData := map[string]string{}
-	for k, v := range revCM.Data {
-		if strings.HasPrefix(k, snapshotPrefix) {
-			snapshotData[strings.TrimPrefix(k, snapshotPrefix)] = v
-		}
-	}
-
-	if len(snapshotData) == 0 {
-		project.Status.Phase = "Error"
-		project.Status.Message = fmt.Sprintf("Revision %d has no snapshot data", revNum)
-		r.updateStatusWithCondition(ctx, project)
-		return ctrl.Result{}, nil
-	}
-
-	// Overwrite the project's -tf ConfigMap with snapshot data
-	cmName := fmt.Sprintf("%s-tf", project.Name)
-	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: cmName, Namespace: project.Namespace}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
-		cm.Labels = mergeLabels(cm.Labels, map[string]string{
-			"app.kubernetes.io/managed-by": "tofu-k8s-operator",
-			"tofu.example.com/project":     project.Name,
-		})
-		cm.Data = snapshotData
-		return controllerutil.SetControllerReference(project, cm, r.Scheme)
-	})
+	cmName, saName, cachePVCName, cacheMode, result, err := r.preparePinnedInfra(ctx, project, snapshotData)
 	if err != nil {
-		return ctrl.Result{}, err
+		return result, err
 	}
 
-	// Ensure ServiceAccount
-	saName := "tofu-runner"
-	if project.Spec.ServiceAccount != nil && project.Spec.ServiceAccount.Name != "" {
-		saName = project.Spec.ServiceAccount.Name
+	locked, lockResult, lockErr := r.checkJobLock(ctx, project, cacheMode)
+	if lockErr != nil {
+		return lockResult, lockErr
+	}
+	if locked {
+		return lockResult, nil
 	}
 
-	// Ensure cache PVC if configured
-	cacheMode := r.cacheMode(project)
-	var cachePVCName string
-	if cacheMode != "" {
-		pvcName, err := r.ensureCachePVC(ctx, project, cacheMode)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		cachePVCName = pvcName
-	}
-
-	// Check for active jobs (same logic as main reconcile)
-	var jobList batchv1.JobList
-	if err := r.List(ctx, &jobList, client.InNamespace(project.Namespace), client.MatchingLabelsSelector{
-		Selector: labels.SelectorFromSet(map[string]string{
-			"tofu.example.com/project": project.Name,
-		}),
-	}); err != nil {
-		return ctrl.Result{}, err
-	}
-	for i := range jobList.Items {
-		j := &jobList.Items[i]
-		if j.Labels["tofu.example.com/job-type"] == "drift" {
-			continue
-		}
-		if j.Status.Succeeded == 0 && j.Status.Failed == 0 {
-			log.Info("waiting for active Job to complete before pinned apply", "job", j.Name)
-			project.Status.Phase = "Running"
-			project.Status.LastJobName = j.Name
-			r.updateStatusWithCondition(ctx, project)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-	}
-
-	// Build and run the pinned apply job (always inline, always auto-approve)
 	image := project.Spec.Image
 	if image == "" {
 		image = "ghcr.io/opentofu/opentofu:latest"
@@ -269,37 +198,112 @@ func (r *TofuProjectReconciler) reconcilePinned(ctx context.Context, project *to
 		if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-
-		// Create a dummy inline program for the job builder
-		dummyProgram := &tofuv1alpha1.TofuProgram{}
-
-		// Build job with auto-approve, inline mode (no git source)
-		projectCopy := *project
-		projectCopy.Spec.AutoApprove = true
-		newJob := buildJob(projectCopy, jobName, cmName, image, dummyProgram, saName)
-		if cacheMode != "" {
-			addCacheToJob(newJob, cachePVCName)
-		}
-		addEnvToJob(newJob, project)
-		addExtraVolumesToJob(newJob, project)
-		if err := addResourcesToJob(newJob, project); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.Create(ctx, newJob); err != nil {
-			return ctrl.Result{}, err
-		}
-		project.Status.Phase = "Running"
-		project.Status.LastJobName = jobName
-		project.Status.Message = fmt.Sprintf("Applying pinned revision %d", revNum)
-		r.updateStatusWithCondition(ctx, project)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return r.createPinnedApplyJob(ctx, project, cmName, image, saName, cacheMode, cachePVCName, jobName, revNum)
 	}
 
-	// Job exists — check status
+	return r.handlePinnedJobResult(ctx, project, job, pinnedHash, jobName, revNum)
+}
+
+// loadPinnedSnapshot reads the revision ConfigMap and extracts snapshot data and the pinned hash.
+// Returns nil snapshotData if the revision was not found or had no data (status updated).
+func (r *TofuProjectReconciler) loadPinnedSnapshot(ctx context.Context, project *tofuv1alpha1.TofuProject, revNum int32) (map[string]string, string, ctrl.Result, error) {
+	revCMName := fmt.Sprintf("%s-rev-%d", project.Name, revNum)
+	var revCM corev1.ConfigMap
+	if err := r.Get(ctx, types.NamespacedName{Name: revCMName, Namespace: project.Namespace}, &revCM); err != nil {
+		if apierrors.IsNotFound(err) {
+			project.Status.Phase = "Error"
+			project.Status.Message = fmt.Sprintf("Pinned revision %d not found (ConfigMap %s)", revNum, revCMName)
+			r.updateStatusWithCondition(ctx, project)
+			return nil, "", ctrl.Result{}, nil
+		}
+		return nil, "", ctrl.Result{}, err
+	}
+
+	storedHash := revCM.Data["appliedHash"]
+	pinnedHash := computePinnedHash(revNum, storedHash)
+
+	snapshotData := map[string]string{}
+	for k, v := range revCM.Data {
+		if strings.HasPrefix(k, snapshotPrefix) {
+			snapshotData[strings.TrimPrefix(k, snapshotPrefix)] = v
+		}
+	}
+
+	if len(snapshotData) == 0 {
+		project.Status.Phase = "Error"
+		project.Status.Message = fmt.Sprintf("Revision %d has no snapshot data", revNum)
+		r.updateStatusWithCondition(ctx, project)
+		return nil, "", ctrl.Result{}, nil
+	}
+
+	return snapshotData, pinnedHash, ctrl.Result{}, nil
+}
+
+// preparePinnedInfra overwrites the -tf ConfigMap with snapshot data and resolves SA + cache.
+func (r *TofuProjectReconciler) preparePinnedInfra(ctx context.Context, project *tofuv1alpha1.TofuProject, snapshotData map[string]string) (string, string, string, string, ctrl.Result, error) {
+	cmName := fmt.Sprintf("%s-tf", project.Name)
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: cmName, Namespace: project.Namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
+		cm.Labels = mergeLabels(cm.Labels, map[string]string{
+			"app.kubernetes.io/managed-by": "tofu-k8s-operator",
+			"tofu.example.com/project":     project.Name,
+		})
+		cm.Data = snapshotData
+		return controllerutil.SetControllerReference(project, cm, r.Scheme)
+	})
+	if err != nil {
+		return "", "", "", "", ctrl.Result{}, err
+	}
+
+	saName := "tofu-runner"
+	if project.Spec.ServiceAccount != nil && project.Spec.ServiceAccount.Name != "" {
+		saName = project.Spec.ServiceAccount.Name
+	}
+
+	cacheMode := r.cacheMode(project)
+	var cachePVCName string
+	if cacheMode != "" {
+		pvcName, err := r.ensureCachePVC(ctx, project, cacheMode)
+		if err != nil {
+			return "", "", "", "", ctrl.Result{}, err
+		}
+		cachePVCName = pvcName
+	}
+
+	return cmName, saName, cachePVCName, cacheMode, ctrl.Result{}, nil
+}
+
+// createPinnedApplyJob creates and submits the pinned apply job.
+func (r *TofuProjectReconciler) createPinnedApplyJob(ctx context.Context, project *tofuv1alpha1.TofuProject, cmName, image, saName, cacheMode, cachePVCName, jobName string, revNum int32) (ctrl.Result, error) {
+	dummyProgram := &tofuv1alpha1.TofuProgram{}
+	projectCopy := *project
+	projectCopy.Spec.AutoApprove = true
+	newJob := buildJob(projectCopy, jobName, cmName, image, dummyProgram, saName)
+	if cacheMode != "" {
+		addCacheToJob(newJob, cachePVCName)
+	}
+	addEnvToJob(newJob, project)
+	addExtraVolumesToJob(newJob, project)
+	if err := addResourcesToJob(newJob, project); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.Create(ctx, newJob); err != nil {
+		return ctrl.Result{}, err
+	}
+	project.Status.Phase = "Running"
+	project.Status.LastJobName = jobName
+	project.Status.Message = fmt.Sprintf("Applying pinned revision %d", revNum)
+	r.updateStatusWithCondition(ctx, project)
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// handlePinnedJobResult checks the status of a pinned apply job.
+func (r *TofuProjectReconciler) handlePinnedJobResult(ctx context.Context, project *tofuv1alpha1.TofuProject, job *batchv1.Job, pinnedHash, jobName string, revNum int32) (ctrl.Result, error) {
 	if job.Status.Succeeded > 0 {
+		log := ctrl.LoggerFrom(ctx)
 		outputs, err := r.captureOutputs(ctx, job)
 		if err != nil {
 			log.Error(err, "failed to capture outputs from pinned apply job (non-fatal)")
@@ -327,7 +331,6 @@ func (r *TofuProjectReconciler) reconcilePinned(ctx context.Context, project *to
 		return ctrl.Result{}, nil
 	}
 
-	// Job still running
 	project.Status.Phase = "Running"
 	project.Status.LastJobName = jobName
 	r.updateStatusWithCondition(ctx, project)

@@ -145,64 +145,13 @@ func (r *TofuProjectReconciler) resolveDependencies(ctx context.Context, project
 // resolveExternalParams fetches ConfigMap/Secret data referenced by paramFrom and paramBindings.
 // Returns (resolved params map, deterministic hash string, error).
 func (r *TofuProjectReconciler) resolveExternalParams(ctx context.Context, project *tofuv1alpha1.TofuProject) (map[string]string, string, error) {
-	resolved := map[string]string{}
-
-	// 1. paramFrom: bulk-read all keys from each ConfigMap/Secret (lowest precedence)
-	for _, pf := range project.Spec.ParamFrom {
-		if pf.ConfigMapRef != nil {
-			ns := pf.ConfigMapRef.Namespace
-			if ns == "" {
-				ns = project.Namespace
-			}
-			var cm corev1.ConfigMap
-			if err := r.Get(ctx, types.NamespacedName{Name: pf.ConfigMapRef.Name, Namespace: ns}, &cm); err != nil {
-				return nil, "", fmt.Errorf("paramFrom configMapRef %s/%s: %w", ns, pf.ConfigMapRef.Name, err)
-			}
-			for k, v := range cm.Data {
-				resolved[k] = v
-			}
-		}
-		if pf.SecretRef != nil {
-			ns := pf.SecretRef.Namespace
-			if ns == "" {
-				ns = project.Namespace
-			}
-			var secret corev1.Secret
-			if err := r.Get(ctx, types.NamespacedName{Name: pf.SecretRef.Name, Namespace: ns}, &secret); err != nil {
-				return nil, "", fmt.Errorf("paramFrom secretRef %s/%s: %w", ns, pf.SecretRef.Name, err)
-			}
-			for k, v := range secret.Data {
-				resolved[k] = string(v)
-			}
-		}
+	resolved, err := r.resolveParamFromSources(ctx, project)
+	if err != nil {
+		return nil, "", err
 	}
 
-	// 2. paramBindings: individual key refs (override paramFrom values)
-	for _, pb := range project.Spec.ParamBindings {
-		if pb.ConfigMapKeyRef != nil {
-			ns := project.Namespace
-			var cm corev1.ConfigMap
-			if err := r.Get(ctx, types.NamespacedName{Name: pb.ConfigMapKeyRef.Name, Namespace: ns}, &cm); err != nil {
-				return nil, "", fmt.Errorf("paramBindings configMapKeyRef %s/%s: %w", ns, pb.ConfigMapKeyRef.Name, err)
-			}
-			val, ok := cm.Data[pb.ConfigMapKeyRef.Key]
-			if !ok {
-				return nil, "", fmt.Errorf("paramBindings configMapKeyRef %s/%s: key %q not found", ns, pb.ConfigMapKeyRef.Name, pb.ConfigMapKeyRef.Key)
-			}
-			resolved[pb.Name] = val
-		}
-		if pb.SecretKeyRef != nil {
-			ns := project.Namespace
-			var secret corev1.Secret
-			if err := r.Get(ctx, types.NamespacedName{Name: pb.SecretKeyRef.Name, Namespace: ns}, &secret); err != nil {
-				return nil, "", fmt.Errorf("paramBindings secretKeyRef %s/%s: %w", ns, pb.SecretKeyRef.Name, err)
-			}
-			val, ok := secret.Data[pb.SecretKeyRef.Key]
-			if !ok {
-				return nil, "", fmt.Errorf("paramBindings secretKeyRef %s/%s: key %q not found", ns, pb.SecretKeyRef.Name, pb.SecretKeyRef.Key)
-			}
-			resolved[pb.Name] = string(val)
-		}
+	if err := r.resolveParamBindingSources(ctx, project, resolved); err != nil {
+		return nil, "", err
 	}
 
 	if len(resolved) == 0 {
@@ -218,6 +167,71 @@ func (r *TofuProjectReconciler) resolveExternalParams(ctx context.Context, proje
 	hashStr := "ext:" + strings.Join(parts, ",")
 
 	return resolved, hashStr, nil
+}
+
+// resolveParamFromSources bulk-reads all keys from each ConfigMap/Secret referenced by paramFrom.
+func (r *TofuProjectReconciler) resolveParamFromSources(ctx context.Context, project *tofuv1alpha1.TofuProject) (map[string]string, error) {
+	resolved := map[string]string{}
+	for _, pf := range project.Spec.ParamFrom {
+		if pf.ConfigMapRef != nil {
+			ns := pf.ConfigMapRef.Namespace
+			if ns == "" {
+				ns = project.Namespace
+			}
+			var cm corev1.ConfigMap
+			if err := r.Get(ctx, types.NamespacedName{Name: pf.ConfigMapRef.Name, Namespace: ns}, &cm); err != nil {
+				return nil, fmt.Errorf("paramFrom configMapRef %s/%s: %w", ns, pf.ConfigMapRef.Name, err)
+			}
+			for k, v := range cm.Data {
+				resolved[k] = v
+			}
+		}
+		if pf.SecretRef != nil {
+			ns := pf.SecretRef.Namespace
+			if ns == "" {
+				ns = project.Namespace
+			}
+			var secret corev1.Secret
+			if err := r.Get(ctx, types.NamespacedName{Name: pf.SecretRef.Name, Namespace: ns}, &secret); err != nil {
+				return nil, fmt.Errorf("paramFrom secretRef %s/%s: %w", ns, pf.SecretRef.Name, err)
+			}
+			for k, v := range secret.Data {
+				resolved[k] = string(v)
+			}
+		}
+	}
+	return resolved, nil
+}
+
+// resolveParamBindingSources resolves individual key refs from paramBindings into the resolved map.
+func (r *TofuProjectReconciler) resolveParamBindingSources(ctx context.Context, project *tofuv1alpha1.TofuProject, resolved map[string]string) error {
+	for _, pb := range project.Spec.ParamBindings {
+		if pb.ConfigMapKeyRef != nil {
+			ns := project.Namespace
+			var cm corev1.ConfigMap
+			if err := r.Get(ctx, types.NamespacedName{Name: pb.ConfigMapKeyRef.Name, Namespace: ns}, &cm); err != nil {
+				return fmt.Errorf("paramBindings configMapKeyRef %s/%s: %w", ns, pb.ConfigMapKeyRef.Name, err)
+			}
+			val, ok := cm.Data[pb.ConfigMapKeyRef.Key]
+			if !ok {
+				return fmt.Errorf("paramBindings configMapKeyRef %s/%s: key %q not found", ns, pb.ConfigMapKeyRef.Name, pb.ConfigMapKeyRef.Key)
+			}
+			resolved[pb.Name] = val
+		}
+		if pb.SecretKeyRef != nil {
+			ns := project.Namespace
+			var secret corev1.Secret
+			if err := r.Get(ctx, types.NamespacedName{Name: pb.SecretKeyRef.Name, Namespace: ns}, &secret); err != nil {
+				return fmt.Errorf("paramBindings secretKeyRef %s/%s: %w", ns, pb.SecretKeyRef.Name, err)
+			}
+			val, ok := secret.Data[pb.SecretKeyRef.Key]
+			if !ok {
+				return fmt.Errorf("paramBindings secretKeyRef %s/%s: key %q not found", ns, pb.SecretKeyRef.Name, pb.SecretKeyRef.Key)
+			}
+			resolved[pb.Name] = string(val)
+		}
+	}
+	return nil
 }
 
 // findProjectsReferencingConfigMap returns reconcile requests for all TofuProjects

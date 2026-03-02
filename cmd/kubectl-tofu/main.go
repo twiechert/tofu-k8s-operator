@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/pmezard/go-difflib/difflib"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -81,6 +83,13 @@ func main() {
 		revStr := os.Args[3]
 		ns := parseNamespaceOnly(4)
 		cmdShow(name, ns, revStr)
+	case "diff":
+		requireArgs(4, "diff <project> <rev1> <rev2> [-n namespace]")
+		name := os.Args[2]
+		rev1Str := os.Args[3]
+		rev2Str := os.Args[4]
+		ns := parseNamespaceOnly(5)
+		cmdDiff(name, ns, rev1Str, rev2Str)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		usage()
@@ -102,6 +111,7 @@ Commands:
   show      Show full details of a revision
   pin       Pin to a stored revision for rollback
   unpin     Resume normal flow (remove pin)
+  diff      Compare two revisions
 `)
 }
 
@@ -375,6 +385,114 @@ func cmdShow(name, ns, revStr string) {
 	if cm.Data["planOutput"] != "" {
 		fmt.Printf("\n--- Plan/Apply Output ---\n%s\n", cm.Data["planOutput"])
 	}
+}
+
+func cmdDiff(name, ns, rev1Str, rev2Str string) {
+	rev1, err := strconv.Atoi(rev1Str)
+	if err != nil || rev1 <= 0 {
+		fmt.Fprintf(os.Stderr, "Invalid revision number: %s\n", rev1Str)
+		os.Exit(1)
+	}
+	rev2, err := strconv.Atoi(rev2Str)
+	if err != nil || rev2 <= 0 {
+		fmt.Fprintf(os.Stderr, "Invalid revision number: %s\n", rev2Str)
+		os.Exit(1)
+	}
+
+	cm1, cm2 := fetchRevisionConfigMaps(name, ns, rev1, rev2)
+	printDiffHeader(cm1, cm2, rev1, rev2)
+
+	hasDiff := diffSnapshotFiles(cm1, cm2, rev1, rev2)
+
+	if cm1.Data["planSummary"] != cm2.Data["planSummary"] {
+		fmt.Printf("\nPlan Summary:\n  rev-%d: %s\n  rev-%d: %s\n", rev1, cm1.Data["planSummary"], rev2, cm2.Data["planSummary"])
+		hasDiff = true
+	}
+	if cm1.Data["outputs"] != cm2.Data["outputs"] {
+		fmt.Printf("\nOutputs:\n  rev-%d: %s\n  rev-%d: %s\n", rev1, cm1.Data["outputs"], rev2, cm2.Data["outputs"])
+		hasDiff = true
+	}
+	if !hasDiff {
+		fmt.Println("No differences found between the two revisions.")
+	}
+}
+
+func fetchRevisionConfigMaps(name, ns string, rev1, rev2 int) (*corev1.ConfigMap, *corev1.ConfigMap) {
+	clientset := newKubernetesClient()
+	ctx := context.Background()
+
+	cm1, err := clientset.CoreV1().ConfigMaps(ns).Get(ctx, fmt.Sprintf("%s-rev-%d", name, rev1), metav1.GetOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting revision %d for %s/%s: %v\n", rev1, ns, name, err)
+		os.Exit(1)
+	}
+	cm2, err := clientset.CoreV1().ConfigMaps(ns).Get(ctx, fmt.Sprintf("%s-rev-%d", name, rev2), metav1.GetOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting revision %d for %s/%s: %v\n", rev2, ns, name, err)
+		os.Exit(1)
+	}
+	return cm1, cm2
+}
+
+func printDiffHeader(cm1, cm2 *corev1.ConfigMap, rev1, rev2 int) {
+	status1 := cm1.Data["status"]
+	if status1 == "" {
+		status1 = "succeeded"
+	}
+	status2 := cm2.Data["status"]
+	if status2 == "" {
+		status2 = "succeeded"
+	}
+	fmt.Printf("--- Revision %d  (hash: %s, status: %s, timestamp: %s)\n", rev1, cm1.Data["appliedHash"], status1, cm1.Data["timestamp"])
+	fmt.Printf("+++ Revision %d  (hash: %s, status: %s, timestamp: %s)\n", rev2, cm2.Data["appliedHash"], status2, cm2.Data["timestamp"])
+	fmt.Println()
+}
+
+func diffSnapshotFiles(cm1, cm2 *corev1.ConfigMap, rev1, rev2 int) bool {
+	const snapshotPrefix = "snapshot:"
+	files := map[string]bool{}
+	for k := range cm1.Data {
+		if strings.HasPrefix(k, snapshotPrefix) {
+			files[strings.TrimPrefix(k, snapshotPrefix)] = true
+		}
+	}
+	for k := range cm2.Data {
+		if strings.HasPrefix(k, snapshotPrefix) {
+			files[strings.TrimPrefix(k, snapshotPrefix)] = true
+		}
+	}
+
+	sortedFiles := make([]string, 0, len(files))
+	for f := range files {
+		sortedFiles = append(sortedFiles, f)
+	}
+	sort.Strings(sortedFiles)
+
+	hasDiff := false
+	for _, fname := range sortedFiles {
+		a := cm1.Data[snapshotPrefix+fname]
+		b := cm2.Data[snapshotPrefix+fname]
+		if a == b {
+			continue
+		}
+		diff := difflib.UnifiedDiff{
+			A:        difflib.SplitLines(a),
+			B:        difflib.SplitLines(b),
+			FromFile: fmt.Sprintf("rev-%d/%s", rev1, fname),
+			ToFile:   fmt.Sprintf("rev-%d/%s", rev2, fname),
+			Context:  3,
+		}
+		text, err := difflib.GetUnifiedDiffString(diff)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error computing diff for %s: %v\n", fname, err)
+			continue
+		}
+		if text != "" {
+			fmt.Print(text)
+			hasDiff = true
+		}
+	}
+	return hasDiff
 }
 
 func cmdLogs(name, ns string, showPlan bool) {

@@ -66,7 +66,7 @@ type KeyRef struct {
 type CacheSpec struct {
 	// mode: "shared" (namespace PVC, jobs serialized) or "dedicated" (per-project PVC)
 	Mode         string `json:"mode,omitempty"`
-	Size         string `json:"size,omitempty"`         // default "1Gi"
+	Size         string `json:"size,omitempty"` // default "1Gi"
 	StorageClass string `json:"storageClass,omitempty"`
 }
 
@@ -122,6 +122,13 @@ type BlastRadiusSummary struct {
 	Change  int32 `json:"change"`
 	Destroy int32 `json:"destroy"`
 	Total   int32 `json:"total"`
+}
+
+type ApplyScheduleSpec struct {
+	// schedule is a cron expression defining when the apply window opens, e.g. "0 2 * * *"
+	Schedule string `json:"schedule"`
+	// window is how long the apply window stays open after the cron fires. Default: "1h"
+	Window string `json:"window,omitempty"`
 }
 
 type TofuProjectSpec struct {
@@ -219,19 +226,24 @@ type TofuProjectSpec struct {
 
 	// pinnedRevision pins the project to a stored revision for rollback. 0 = normal flow.
 	PinnedRevision int32 `json:"pinnedRevision,omitempty"`
+
+	// applySchedule gates when approved plans are actually applied.
+	// Plans auto-apply only during the configured maintenance window (cron + duration).
+	// Only meaningful when autoApprove is false.
+	ApplySchedule *ApplyScheduleSpec `json:"applySchedule,omitempty"`
 }
 
 type TofuProjectStatus struct {
-	ObservedGeneration int64  `json:"observedGeneration,omitempty"`
-	LastJobName        string `json:"lastJobName,omitempty"`
-	LastAppliedHash    string `json:"lastAppliedHash,omitempty"`
-	Revision           int32  `json:"revision,omitempty"`
-	Phase              string `json:"phase,omitempty"`
-	Message            string `json:"message,omitempty"`
-	SyncStatus         string `json:"syncStatus,omitempty"` // 'sync' or 'not in sync'
-	PendingPlanHash    string `json:"pendingPlanHash,omitempty"`
-	PlanOutput         string `json:"planOutput,omitempty"`
-	PlanSummary        string `json:"planSummary,omitempty"`
+	ObservedGeneration int64               `json:"observedGeneration,omitempty"`
+	LastJobName        string              `json:"lastJobName,omitempty"`
+	LastAppliedHash    string              `json:"lastAppliedHash,omitempty"`
+	Revision           int32               `json:"revision,omitempty"`
+	Phase              string              `json:"phase,omitempty"`
+	Message            string              `json:"message,omitempty"`
+	SyncStatus         string              `json:"syncStatus,omitempty"` // 'sync' or 'not in sync'
+	PendingPlanHash    string              `json:"pendingPlanHash,omitempty"`
+	PlanOutput         string              `json:"planOutput,omitempty"`
+	PlanSummary        string              `json:"planSummary,omitempty"`
 	LastPlanJobName    string              `json:"lastPlanJobName,omitempty"`
 	Outputs            map[string]string   `json:"outputs,omitempty"`
 	Conditions         []metav1.Condition  `json:"conditions,omitempty"`
@@ -272,137 +284,163 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
 	out.Spec = in.Spec
 	out.Status = in.Status
-	if in.Spec.Params != nil {
-		out.Spec.Params = map[string]string{}
-		for k, v := range in.Spec.Params {
-			out.Spec.Params[k] = v
+	deepCopySpecPointers(&in.Spec, &out.Spec)
+	deepCopySpecSlices(&in.Spec, &out.Spec)
+	deepCopySpecNested(&in.Spec, &out.Spec)
+	deepCopyStatus(&in.Status, &out.Status)
+	return out
+}
+
+func deepCopySpecPointers(in, out *TofuProjectSpec) {
+	if in.Backend.S3 != nil {
+		s3Copy := *in.Backend.S3
+		out.Backend.S3 = &s3Copy
+	}
+	if in.ApplyImmediately != nil {
+		val := *in.ApplyImmediately
+		out.ApplyImmediately = &val
+	}
+	if in.AutoApproveMaxBlastRadius != nil {
+		val := *in.AutoApproveMaxBlastRadius
+		out.AutoApproveMaxBlastRadius = &val
+	}
+	if in.ServiceAccount != nil {
+		saCopy := *in.ServiceAccount
+		if in.ServiceAccount.Annotations != nil {
+			saCopy.Annotations = map[string]string{}
+			for k, v := range in.ServiceAccount.Annotations {
+				saCopy.Annotations[k] = v
+			}
+		}
+		out.ServiceAccount = &saCopy
+	}
+	if in.Cache != nil {
+		cacheCopy := *in.Cache
+		out.Cache = &cacheCopy
+	}
+	if in.RetryPolicy != nil {
+		rpCopy := *in.RetryPolicy
+		out.RetryPolicy = &rpCopy
+	}
+	if in.DriftDetection != nil {
+		ddCopy := *in.DriftDetection
+		out.DriftDetection = &ddCopy
+	}
+	if in.RevisionHistoryLimit != nil {
+		val := *in.RevisionHistoryLimit
+		out.RevisionHistoryLimit = &val
+	}
+	if in.ApplySchedule != nil {
+		asCopy := *in.ApplySchedule
+		out.ApplySchedule = &asCopy
+	}
+}
+
+func deepCopySpecSlices(in, out *TofuProjectSpec) {
+	if in.Params != nil {
+		out.Params = map[string]string{}
+		for k, v := range in.Params {
+			out.Params[k] = v
 		}
 	}
-	if in.Spec.ParamFrom != nil {
-		out.Spec.ParamFrom = make([]ParamFromSource, len(in.Spec.ParamFrom))
-		for i, pf := range in.Spec.ParamFrom {
-			out.Spec.ParamFrom[i] = ParamFromSource{}
+	if in.ParamFrom != nil {
+		out.ParamFrom = make([]ParamFromSource, len(in.ParamFrom))
+		for i, pf := range in.ParamFrom {
+			out.ParamFrom[i] = ParamFromSource{}
 			if pf.ConfigMapRef != nil {
 				ref := *pf.ConfigMapRef
-				out.Spec.ParamFrom[i].ConfigMapRef = &ref
+				out.ParamFrom[i].ConfigMapRef = &ref
 			}
 			if pf.SecretRef != nil {
 				ref := *pf.SecretRef
-				out.Spec.ParamFrom[i].SecretRef = &ref
+				out.ParamFrom[i].SecretRef = &ref
 			}
 		}
 	}
-	if in.Spec.ParamBindings != nil {
-		out.Spec.ParamBindings = make([]ParamBinding, len(in.Spec.ParamBindings))
-		for i, pb := range in.Spec.ParamBindings {
-			out.Spec.ParamBindings[i] = ParamBinding{Name: pb.Name}
+	if in.ParamBindings != nil {
+		out.ParamBindings = make([]ParamBinding, len(in.ParamBindings))
+		for i, pb := range in.ParamBindings {
+			out.ParamBindings[i] = ParamBinding{Name: pb.Name}
 			if pb.ConfigMapKeyRef != nil {
 				ref := *pb.ConfigMapKeyRef
-				out.Spec.ParamBindings[i].ConfigMapKeyRef = &ref
+				out.ParamBindings[i].ConfigMapKeyRef = &ref
 			}
 			if pb.SecretKeyRef != nil {
 				ref := *pb.SecretKeyRef
-				out.Spec.ParamBindings[i].SecretKeyRef = &ref
+				out.ParamBindings[i].SecretKeyRef = &ref
 			}
 		}
 	}
-	if in.Spec.Dependencies != nil {
-		out.Spec.Dependencies = make([]ProjectDependency, len(in.Spec.Dependencies))
-		for i, dep := range in.Spec.Dependencies {
-			out.Spec.Dependencies[i] = ProjectDependency{
+	if in.Dependencies != nil {
+		out.Dependencies = make([]ProjectDependency, len(in.Dependencies))
+		for i, dep := range in.Dependencies {
+			out.Dependencies[i] = ProjectDependency{
 				ProjectRef: dep.ProjectRef,
 			}
 			if dep.Outputs != nil {
-				out.Spec.Dependencies[i].Outputs = map[string]string{}
+				out.Dependencies[i].Outputs = map[string]string{}
 				for k, v := range dep.Outputs {
-					out.Spec.Dependencies[i].Outputs[k] = v
+					out.Dependencies[i].Outputs[k] = v
 				}
 			}
 		}
 	}
-	if in.Spec.Backend.S3 != nil {
-		s3Copy := *in.Spec.Backend.S3
-		out.Spec.Backend.S3 = &s3Copy
-	}
-	if in.Spec.ApplyImmediately != nil {
-		val := *in.Spec.ApplyImmediately
-		out.Spec.ApplyImmediately = &val
-	}
-	if in.Spec.AutoApproveMaxBlastRadius != nil {
-		val := *in.Spec.AutoApproveMaxBlastRadius
-		out.Spec.AutoApproveMaxBlastRadius = &val
-	}
-	if in.Spec.ServiceAccount != nil {
-		saCopy := *in.Spec.ServiceAccount
-		if in.Spec.ServiceAccount.Annotations != nil {
-			saCopy.Annotations = map[string]string{}
-			for k, v := range in.Spec.ServiceAccount.Annotations {
-				saCopy.Annotations[k] = v
-			}
-		}
-		out.Spec.ServiceAccount = &saCopy
-	}
-	if in.Spec.Cache != nil {
-		cacheCopy := *in.Spec.Cache
-		out.Spec.Cache = &cacheCopy
-	}
-	if in.Spec.Env != nil {
-		data, _ := json.Marshal(in.Spec.Env)
+	deepCopySpecSlicesViaJSON(in, out)
+}
+
+func deepCopySpecSlicesViaJSON(in, out *TofuProjectSpec) {
+	if in.Env != nil {
+		data, _ := json.Marshal(in.Env)
 		var envCopy []corev1.EnvVar
 		_ = json.Unmarshal(data, &envCopy)
-		out.Spec.Env = envCopy
+		out.Env = envCopy
 	}
-	if in.Spec.EnvFrom != nil {
-		data, _ := json.Marshal(in.Spec.EnvFrom)
+	if in.EnvFrom != nil {
+		data, _ := json.Marshal(in.EnvFrom)
 		var envFromCopy []corev1.EnvFromSource
 		_ = json.Unmarshal(data, &envFromCopy)
-		out.Spec.EnvFrom = envFromCopy
+		out.EnvFrom = envFromCopy
 	}
-	if in.Spec.ExtraVolumes != nil {
-		data, _ := json.Marshal(in.Spec.ExtraVolumes)
+	if in.ExtraVolumes != nil {
+		data, _ := json.Marshal(in.ExtraVolumes)
 		var volCopy []corev1.Volume
 		_ = json.Unmarshal(data, &volCopy)
-		out.Spec.ExtraVolumes = volCopy
+		out.ExtraVolumes = volCopy
 	}
-	if in.Spec.ExtraVolumeMounts != nil {
-		data, _ := json.Marshal(in.Spec.ExtraVolumeMounts)
+	if in.ExtraVolumeMounts != nil {
+		data, _ := json.Marshal(in.ExtraVolumeMounts)
 		var mountCopy []corev1.VolumeMount
 		_ = json.Unmarshal(data, &mountCopy)
-		out.Spec.ExtraVolumeMounts = mountCopy
+		out.ExtraVolumeMounts = mountCopy
 	}
-	if in.Spec.Resources != nil {
+}
+
+func deepCopySpecNested(in, out *TofuProjectSpec) {
+	if in.Resources != nil {
 		resCopy := ResourceRequirements{}
-		if in.Spec.Resources.Limits != nil {
+		if in.Resources.Limits != nil {
 			resCopy.Limits = map[string]string{}
-			for k, v := range in.Spec.Resources.Limits {
+			for k, v := range in.Resources.Limits {
 				resCopy.Limits[k] = v
 			}
 		}
-		if in.Spec.Resources.Requests != nil {
+		if in.Resources.Requests != nil {
 			resCopy.Requests = map[string]string{}
-			for k, v := range in.Spec.Resources.Requests {
+			for k, v := range in.Resources.Requests {
 				resCopy.Requests[k] = v
 			}
 		}
-		out.Spec.Resources = &resCopy
+		out.Resources = &resCopy
 	}
-	if in.Spec.RetryPolicy != nil {
-		rpCopy := *in.Spec.RetryPolicy
-		out.Spec.RetryPolicy = &rpCopy
-	}
-	if in.Spec.DriftDetection != nil {
-		ddCopy := *in.Spec.DriftDetection
-		out.Spec.DriftDetection = &ddCopy
-	}
-	if in.Spec.Validation != nil {
+	if in.Validation != nil {
 		vCopy := ValidationSpec{}
-		if in.Spec.Validation.TofuValidate != nil {
-			val := *in.Spec.Validation.TofuValidate
+		if in.Validation.TofuValidate != nil {
+			val := *in.Validation.TofuValidate
 			vCopy.TofuValidate = &val
 		}
-		if in.Spec.Validation.Steps != nil {
-			vCopy.Steps = make([]ValidationStep, len(in.Spec.Validation.Steps))
-			for i, s := range in.Spec.Validation.Steps {
+		if in.Validation.Steps != nil {
+			vCopy.Steps = make([]ValidationStep, len(in.Validation.Steps))
+			for i, s := range in.Validation.Steps {
 				vCopy.Steps[i] = ValidationStep{Name: s.Name, Standard: s.Standard}
 				if s.Custom != nil {
 					cCopy := *s.Custom
@@ -410,13 +448,13 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 				}
 			}
 		}
-		out.Spec.Validation = &vCopy
+		out.Validation = &vCopy
 	}
-	if in.Spec.Notifications != nil {
+	if in.Notifications != nil {
 		nCopy := NotificationSpec{}
-		if in.Spec.Notifications.Webhooks != nil {
-			nCopy.Webhooks = make([]WebhookNotification, len(in.Spec.Notifications.Webhooks))
-			for i, wh := range in.Spec.Notifications.Webhooks {
+		if in.Notifications.Webhooks != nil {
+			nCopy.Webhooks = make([]WebhookNotification, len(in.Notifications.Webhooks))
+			for i, wh := range in.Notifications.Webhooks {
 				nCopy.Webhooks[i] = WebhookNotification{URL: wh.URL}
 				if wh.Events != nil {
 					nCopy.Webhooks[i].Events = make([]string, len(wh.Events))
@@ -424,31 +462,29 @@ func (in *TofuProject) DeepCopyObject() runtime.Object {
 				}
 			}
 		}
-		out.Spec.Notifications = &nCopy
+		out.Notifications = &nCopy
 	}
-	if in.Spec.RevisionHistoryLimit != nil {
-		val := *in.Spec.RevisionHistoryLimit
-		out.Spec.RevisionHistoryLimit = &val
+}
+
+func deepCopyStatus(in, out *TofuProjectStatus) {
+	if in.LastDriftCheckTime != nil {
+		t := *in.LastDriftCheckTime
+		out.LastDriftCheckTime = &t
 	}
-	if in.Status.LastDriftCheckTime != nil {
-		t := *in.Status.LastDriftCheckTime
-		out.Status.LastDriftCheckTime = &t
-	}
-	if in.Status.Outputs != nil {
-		out.Status.Outputs = map[string]string{}
-		for k, v := range in.Status.Outputs {
-			out.Status.Outputs[k] = v
+	if in.Outputs != nil {
+		out.Outputs = map[string]string{}
+		for k, v := range in.Outputs {
+			out.Outputs[k] = v
 		}
 	}
-	if in.Status.BlastRadius != nil {
-		brCopy := *in.Status.BlastRadius
-		out.Status.BlastRadius = &brCopy
+	if in.BlastRadius != nil {
+		brCopy := *in.BlastRadius
+		out.BlastRadius = &brCopy
 	}
-	if in.Status.Conditions != nil {
-		out.Status.Conditions = make([]metav1.Condition, len(in.Status.Conditions))
-		copy(out.Status.Conditions, in.Status.Conditions)
+	if in.Conditions != nil {
+		out.Conditions = make([]metav1.Condition, len(in.Conditions))
+		copy(out.Conditions, in.Conditions)
 	}
-	return out
 }
 
 func (in *TofuProjectList) DeepCopyObject() runtime.Object {

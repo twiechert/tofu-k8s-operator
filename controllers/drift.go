@@ -49,29 +49,7 @@ func (r *TofuProjectReconciler) reconcileDriftDetection(ctx context.Context, pro
 	for i := range jobList.Items {
 		j := &jobList.Items[i]
 		if j.Status.Succeeded > 0 {
-			// Read logs to check for drift
-			output, err := r.readJobLogs(ctx, j)
-			if err != nil {
-				log.Error(err, "failed to read drift job logs")
-			} else {
-				summary := extractPlanSummary(output)
-				blastRadius := parsePlanCounts(summary)
-				now := metav1.Now()
-				project.Status.LastDriftCheckTime = &now
-				project.Status.BlastRadius = blastRadius
-				if summary == "No changes." || summary == "" {
-					project.Status.DriftDetected = false
-					project.Status.Phase = "Succeeded"
-					project.Status.Message = ""
-					log.Info("drift check: no drift detected")
-				} else {
-					project.Status.DriftDetected = true
-					project.Status.SyncStatus = "not in sync"
-					log.Info("drift check: drift detected", "summary", summary)
-					sendNotification(ctx, project, "drift:detected")
-				}
-				r.updateStatusWithCondition(ctx, project)
-			}
+			r.handleCompletedDriftJob(ctx, project, j)
 			// Clean up completed drift job
 			_ = r.Delete(ctx, j, client.PropagationPolicy(metav1.DeletePropagationBackground))
 			if project.Status.DriftDetected && project.Spec.KeepInSync {
@@ -125,6 +103,34 @@ func (r *TofuProjectReconciler) reconcileDriftDetection(ctx context.Context, pro
 	project.Status.Message = "Running drift detection"
 	r.updateStatusWithCondition(ctx, project)
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// handleCompletedDriftJob reads logs from a succeeded drift job, parses the summary,
+// and updates drift status on the project.
+func (r *TofuProjectReconciler) handleCompletedDriftJob(ctx context.Context, project *tofuv1alpha1.TofuProject, j *batchv1.Job) {
+	log := ctrl.LoggerFrom(ctx)
+	output, err := r.readJobLogs(ctx, j)
+	if err != nil {
+		log.Error(err, "failed to read drift job logs")
+		return
+	}
+	summary := extractPlanSummary(output)
+	blastRadius := parsePlanCounts(summary)
+	now := metav1.Now()
+	project.Status.LastDriftCheckTime = &now
+	project.Status.BlastRadius = blastRadius
+	if summary == "No changes." || summary == "" {
+		project.Status.DriftDetected = false
+		project.Status.Phase = "Succeeded"
+		project.Status.Message = ""
+		log.Info("drift check: no drift detected")
+	} else {
+		project.Status.DriftDetected = true
+		project.Status.SyncStatus = "not in sync"
+		log.Info("drift check: drift detected", "summary", summary)
+		sendNotification(ctx, project, "drift:detected")
+	}
+	r.updateStatusWithCondition(ctx, project)
 }
 
 // parseDriftInterval parses a drift detection interval string. Default 15m.
