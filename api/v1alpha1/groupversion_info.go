@@ -7,9 +7,9 @@ import (
 )
 
 var (
-	GroupVersion = schema.GroupVersion{Group: "tofu.example.com", Version: "v1alpha1"}
+	GroupVersion  = schema.GroupVersion{Group: "tofu.example.com", Version: "v1alpha1"}
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
-	AddToScheme = SchemeBuilder.AddToScheme
+	AddToScheme   = SchemeBuilder.AddToScheme
 )
 
 func init() {

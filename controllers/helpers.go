@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -51,7 +52,7 @@ func updateReadyCondition(project *tofuv1alpha1.TofuProject) {
 		reason = "Error"
 		message = project.Status.Message
 	default:
-		// Running, Planning, WaitingApproval, WaitingDeleteApproval, Suspended, etc.
+		// Running, Planning, WaitingApproval, WaitingDeleteApproval, Suspended, ScheduledApply, etc.
 		if !applyImmediately(project) {
 			status = metav1.ConditionTrue
 			reason = "Accepted"
@@ -409,4 +410,47 @@ func sanitizeSecretKey(key string) string {
 		return ""
 	}
 	return out
+}
+
+// isWithinApplyWindow checks whether the given time falls within the apply schedule window.
+// Returns (inWindow, nextWindowStart). On parse errors returns (false, zero time).
+func isWithinApplyWindow(spec *tofuv1alpha1.ApplyScheduleSpec, now time.Time) (bool, time.Time) {
+	if spec == nil {
+		return false, time.Time{}
+	}
+
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	sched, err := parser.Parse(spec.Schedule)
+	if err != nil {
+		return false, time.Time{}
+	}
+
+	windowDur := time.Hour // default 1h
+	if spec.Window != "" {
+		d, err := time.ParseDuration(spec.Window)
+		if err == nil && d > 0 {
+			windowDur = d
+		}
+	}
+
+	// Find the most recent fire time before now by stepping back from now.
+	// The cron library only provides Next(), so we search backwards by computing
+	// Next() from progressively earlier times.
+	// Start by checking a range of 2x the window + 25h (covers daily crons).
+	searchStart := now.Add(-(windowDur + 25*time.Hour))
+	candidate := sched.Next(searchStart)
+
+	// Walk forward to find the last fire time <= now
+	var lastFire time.Time
+	for !candidate.After(now) {
+		lastFire = candidate
+		candidate = sched.Next(candidate)
+	}
+	nextWindowStart := candidate
+
+	if !lastFire.IsZero() && now.Before(lastFire.Add(windowDur)) {
+		return true, nextWindowStart
+	}
+
+	return false, nextWindowStart
 }

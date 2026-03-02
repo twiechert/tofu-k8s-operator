@@ -25,3 +25,4 @@ just install-plugin
 | `kubectl tofu show <project> <revision> [-n ns]` | Show full details of a revision |
 | `kubectl tofu pin <project> <revision> [-n ns]` | Pin to a stored revision for rollback |
 | `kubectl tofu unpin <project> [-n ns]` | Resume normal flow (remove pin) |
+| `kubectl tofu diff <project> <rev1> <rev2> [-n ns]` | Compare two revisions (unified diff of snapshots) |

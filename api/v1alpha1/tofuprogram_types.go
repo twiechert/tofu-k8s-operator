@@ -69,7 +69,9 @@ func init() {
 
 // DeepCopyObject implementations (handwritten minimal)
 func (in *TofuProgram) DeepCopyObject() runtime.Object {
-	if in == nil { return nil }
+	if in == nil {
+		return nil
+	}
 	out := new(TofuProgram)
 	*out = *in
 	out.TypeMeta = in.TypeMeta
@@ -91,7 +93,9 @@ func (in *TofuProgram) DeepCopyObject() runtime.Object {
 }
 
 func (in *TofuProgramList) DeepCopyObject() runtime.Object {
-	if in == nil { return nil }
+	if in == nil {
+		return nil
+	}
 	out := new(TofuProgramList)
 	*out = *in
 	out.TypeMeta = in.TypeMeta

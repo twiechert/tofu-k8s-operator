@@ -322,6 +322,17 @@ spec:
                   type: integer
                   format: int32
                   description: "Pin to a stored revision for rollback. 0 = normal flow."
+                applySchedule:
+                  type: object
+                  description: "Gate when approved plans are applied. Plans auto-apply only during the configured maintenance window."
+                  required: [schedule]
+                  properties:
+                    schedule:
+                      type: string
+                      description: "Cron expression defining when the apply window opens, e.g. '0 2 * * *'"
+                    window:
+                      type: string
+                      description: "How long the apply window stays open after the cron fires. Default: 1h"
             status:
               type: object
               properties:

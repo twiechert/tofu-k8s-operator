@@ -47,7 +47,7 @@ TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
 - [Plan-then-approve](doc/plan-approve.md) workflow
 - [Delete protection](doc/delete-protection.md) — prevent accidental infrastructure destruction
 - Configurable service account — custom SA or annotations (IRSA/workload identity)
-- [kubectl plugin](doc/kubectl-plugin.md) — `kubectl tofu plan|approve|delete|suspend|resume`
+- [kubectl plugin](doc/kubectl-plugin.md) — `kubectl tofu plan|approve|delete|suspend|resume|diff`
 - Suspend mode — pause reconciliation entirely
 - Sync interval — periodic re-reconciliation
 - Automatic destroy via finalizer
@@ -63,6 +63,8 @@ TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
 - [Ignore providers & additional providers HCL](doc/ignore-providers.md) — strip source provider/backend blocks, inject custom provider config
 - [Blast radius tracking](doc/blast-radius.md) — parsed plan counts with conditional auto-approve by threshold
 - [Revision history & pinned revisions](doc/revisions.md) — audit trail of every apply, rollback to any stored revision
+- [Scheduled apply windows](doc/scheduled-apply.md) — gate when approved plans are applied using cron-based maintenance windows
+- [Revision diff](doc/kubectl-plugin.md) — compare two stored revisions to see what changed between applies
 
 ## Quick Start
 
@@ -204,7 +206,7 @@ spec:
 | [Cross-Project Dependencies](doc/dependencies.md) | Consume outputs from upstream projects as input params |
 | [Provider Plugin Cache](doc/provider-cache.md) | Cache providers via PVC to speed up `tofu init` |
 | [Delete Protection](doc/delete-protection.md) | Prevent accidental infrastructure destruction |
-| [kubectl Plugin](doc/kubectl-plugin.md) | CLI for plan, approve, logs, delete, suspend, resume |
+| [kubectl Plugin](doc/kubectl-plugin.md) | CLI for plan, approve, logs, delete, suspend, resume, diff |
 | [Environment Variables](doc/env-vars.md) | Inject env vars and envFrom into tofu Jobs |
 | [Extra Volumes](doc/extra-volumes.md) | Mount ConfigMaps, Secrets, PVCs, or image volumes into tofu Jobs |
 | [Resource Limits](doc/resource-limits.md) | Set CPU/memory requests and limits on Job containers |
@@ -215,6 +217,7 @@ spec:
 | [Ignore Providers](doc/ignore-providers.md) | Strip source provider/backend blocks, inject custom provider config |
 | [Blast Radius](doc/blast-radius.md) | Blast radius tracking and conditional auto-approve by threshold |
 | [Revision History](doc/revisions.md) | Audit trail of every apply, rollback to any stored revision |
+| [Scheduled Apply](doc/scheduled-apply.md) | Gate applies behind cron-based maintenance windows |
 | [Examples](doc/examples.md) | AWS S3 bucket example and more |
 
 ## Build & Test

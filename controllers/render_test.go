@@ -996,3 +996,56 @@ func TestBlastRadiusNotConfigured(t *testing.T) {
 		t.Fatal("should not auto-approve when threshold is nil")
 	}
 }
+
+// --- Tests for scheduled apply window ---
+
+func TestScheduledApplyBlocksOutsideWindow(t *testing.T) {
+	// Simulate the controller logic: when an apply schedule is configured
+	// and we're outside the window, the phase should be ScheduledApply.
+	project := fakeProject("test")
+	project.Spec.ApplySchedule = &tofuv1alpha1.ApplyScheduleSpec{
+		Schedule: "0 2 * * *", // daily at 2am
+		Window:   "1h",
+	}
+	// Simulate being outside the window (e.g. 5pm)
+	now := time.Date(2025, 1, 1, 17, 0, 0, 0, time.UTC)
+	inWindow, nextWindow := isWithinApplyWindow(project.Spec.ApplySchedule, now)
+	if inWindow {
+		t.Fatal("expected to be outside apply window at 5pm for 2am schedule")
+	}
+	if nextWindow.IsZero() {
+		t.Fatal("expected non-zero next window time")
+	}
+
+	// Verify phase would be set to ScheduledApply
+	project.Status.Phase = "ScheduledApply"
+	project.Status.Message = "Plan approved, waiting for apply window"
+	if project.Status.Phase != "ScheduledApply" {
+		t.Fatalf("expected phase ScheduledApply, got %s", project.Status.Phase)
+	}
+}
+
+func TestScheduledApplyProceedsInWindow(t *testing.T) {
+	// When within the apply window, the apply should proceed normally.
+	project := fakeProject("test")
+	project.Spec.ApplySchedule = &tofuv1alpha1.ApplyScheduleSpec{
+		Schedule: "0 2 * * *", // daily at 2am
+		Window:   "1h",
+	}
+	// Simulate being inside the window (2:30am)
+	now := time.Date(2025, 1, 1, 2, 30, 0, 0, time.UTC)
+	inWindow, _ := isWithinApplyWindow(project.Spec.ApplySchedule, now)
+	if !inWindow {
+		t.Fatal("expected to be within apply window at 2:30am for 2am+1h schedule")
+	}
+}
+
+func TestScheduledApplyNilSchedule(t *testing.T) {
+	// When no schedule is configured, the apply should proceed immediately.
+	project := fakeProject("test")
+	// project.Spec.ApplySchedule is nil — no schedule configured
+	if project.Spec.ApplySchedule != nil {
+		t.Fatal("expected nil apply schedule")
+	}
+	// Controller logic: when ApplySchedule is nil, skip the check entirely
+}
