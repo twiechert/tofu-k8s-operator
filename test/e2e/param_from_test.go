@@ -244,6 +244,290 @@ spec:
 	}
 }
 
+func TestValuesFromConfigMap(t *testing.T) {
+	t.Parallel()
+	dynClient := newDynamicClient(t)
+	clientset := newClientset(t)
+
+	cmYAML := `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-cm
+  namespace: default
+data:
+  seed: "from-valuesFrom-cm"
+`
+	applyYAML(t, cmYAML)
+	defer deleteYAML(t, cmYAML)
+
+	project := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: vf-cm-test
+  namespace: default
+spec:
+  programRef:
+    name: param-test-prog
+  valuesFrom:
+    - configMapRef: vf-cm
+  backend:
+    secretSuffix: vf-cm-test
+    namespace: default
+  autoApprove: true
+`
+	applyYAML(t, project)
+	defer deleteYAML(t, project)
+
+	waitForPhase(t, dynClient, "default", "vf-cm-test", "Succeeded", 120*time.Second)
+
+	cm, err := clientset.CoreV1().ConfigMaps("default").Get(context.Background(), "vf-cm-test-tf", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get tf configmap: %v", err)
+	}
+	vars := cm.Data["terraform.tfvars.json"]
+	if vars == "" {
+		t.Fatal("expected terraform.tfvars.json in configmap")
+	}
+	if !strings.Contains(vars, "from-valuesFrom-cm") {
+		t.Fatalf("expected valuesFrom value in tfvars, got: %s", vars)
+	}
+}
+
+func TestValuesFromSecret(t *testing.T) {
+	t.Parallel()
+	dynClient := newDynamicClient(t)
+
+	secretYAML := `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vf-secret
+  namespace: default
+stringData:
+  seed: "from-valuesFrom-secret"
+`
+	applyYAML(t, secretYAML)
+	defer deleteYAML(t, secretYAML)
+
+	project := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: vf-secret-test
+  namespace: default
+spec:
+  programRef:
+    name: param-test-prog
+  valuesFrom:
+    - secretRef: vf-secret
+  backend:
+    secretSuffix: vf-secret-test
+    namespace: default
+  autoApprove: true
+`
+	applyYAML(t, project)
+	defer deleteYAML(t, project)
+
+	waitForPhase(t, dynClient, "default", "vf-secret-test", "Succeeded", 120*time.Second)
+}
+
+func TestValuesFromLayeringOrder(t *testing.T) {
+	t.Parallel()
+	dynClient := newDynamicClient(t)
+	clientset := newClientset(t)
+
+	cm1YAML := `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-layer-base
+  namespace: default
+data:
+  seed: "from-base"
+`
+	cm2YAML := `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-layer-override
+  namespace: default
+data:
+  seed: "from-override"
+`
+	applyYAML(t, cm1YAML)
+	defer deleteYAML(t, cm1YAML)
+	applyYAML(t, cm2YAML)
+	defer deleteYAML(t, cm2YAML)
+
+	project := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: vf-layer-test
+  namespace: default
+spec:
+  programRef:
+    name: param-test-prog
+  valuesFrom:
+    - configMapRef: vf-layer-base
+    - configMapRef: vf-layer-override
+  backend:
+    secretSuffix: vf-layer-test
+    namespace: default
+  autoApprove: true
+`
+	applyYAML(t, project)
+	defer deleteYAML(t, project)
+
+	waitForPhase(t, dynClient, "default", "vf-layer-test", "Succeeded", 120*time.Second)
+
+	cm, err := clientset.CoreV1().ConfigMaps("default").Get(context.Background(), "vf-layer-test-tf", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get tf configmap: %v", err)
+	}
+	vars := cm.Data["terraform.tfvars.json"]
+	// Later entry should win
+	if !strings.Contains(vars, "from-override") {
+		t.Fatalf("expected later valuesFrom entry to override, got: %s", vars)
+	}
+}
+
+func TestValuesFromPrecedenceVsParamFrom(t *testing.T) {
+	t.Parallel()
+	dynClient := newDynamicClient(t)
+	clientset := newClientset(t)
+
+	vfCMYAML := `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-prec-low
+  namespace: default
+data:
+  seed: "from-valuesFrom"
+`
+	pfCMYAML := `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-prec-high
+  namespace: default
+data:
+  seed: "from-paramFrom"
+`
+	applyYAML(t, vfCMYAML)
+	defer deleteYAML(t, vfCMYAML)
+	applyYAML(t, pfCMYAML)
+	defer deleteYAML(t, pfCMYAML)
+
+	project := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: vf-prec-test
+  namespace: default
+spec:
+  programRef:
+    name: param-test-prog
+  valuesFrom:
+    - configMapRef: vf-prec-low
+  paramFrom:
+    - configMapRef:
+        name: vf-prec-high
+  backend:
+    secretSuffix: vf-prec-test
+    namespace: default
+  autoApprove: true
+`
+	applyYAML(t, project)
+	defer deleteYAML(t, project)
+
+	waitForPhase(t, dynClient, "default", "vf-prec-test", "Succeeded", 120*time.Second)
+
+	cm, err := clientset.CoreV1().ConfigMaps("default").Get(context.Background(), "vf-prec-test-tf", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get tf configmap: %v", err)
+	}
+	vars := cm.Data["terraform.tfvars.json"]
+	// paramFrom should override valuesFrom
+	if !strings.Contains(vars, "from-paramFrom") {
+		t.Fatalf("expected paramFrom to override valuesFrom, got: %s", vars)
+	}
+}
+
+func TestValuesFromConfigMapWatch(t *testing.T) {
+	t.Parallel()
+	dynClient := newDynamicClient(t)
+	clientset := newClientset(t)
+
+	cmYAML := `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-watch-cm
+  namespace: default
+data:
+  seed: "vf-initial"
+`
+	applyYAML(t, cmYAML)
+	defer deleteYAML(t, cmYAML)
+
+	project := `
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: vf-watch-test
+  namespace: default
+spec:
+  programRef:
+    name: param-test-prog
+  valuesFrom:
+    - configMapRef: vf-watch-cm
+  backend:
+    secretSuffix: vf-watch-test
+    namespace: default
+  autoApprove: true
+`
+	applyYAML(t, project)
+	defer deleteYAML(t, project)
+
+	waitForPhase(t, dynClient, "default", "vf-watch-test", "Succeeded", 120*time.Second)
+
+	obj, err := dynClient.Resource(tofuProjectGVR).Namespace("default").Get(context.Background(), "vf-watch-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get project: %v", err)
+	}
+	status, _, _ := unstructured.NestedMap(obj.Object, "status")
+	oldHash, _ := status["lastAppliedHash"].(string)
+	if oldHash == "" {
+		t.Fatal("expected lastAppliedHash to be set")
+	}
+
+	// Update ConfigMap — should trigger re-reconciliation via watch
+	patch := []byte(`{"data":{"seed":"vf-updated"}}`)
+	_, err = clientset.CoreV1().ConfigMaps("default").Patch(
+		context.Background(), "vf-watch-cm", types.MergePatchType, patch, metav1.PatchOptions{},
+	)
+	if err != nil {
+		t.Fatalf("failed to update ConfigMap: %v", err)
+	}
+
+	time.Sleep(2 * time.Second)
+	waitForPhase(t, dynClient, "default", "vf-watch-test", "Succeeded", 120*time.Second)
+
+	obj, err = dynClient.Resource(tofuProjectGVR).Namespace("default").Get(context.Background(), "vf-watch-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get project after update: %v", err)
+	}
+	status, _, _ = unstructured.NestedMap(obj.Object, "status")
+	newHash, _ := status["lastAppliedHash"].(string)
+	if newHash == oldHash {
+		t.Fatalf("expected hash to change after ConfigMap update, still %s", oldHash)
+	}
+}
+
 func TestParamFromConfigMapWatch(t *testing.T) {
 	t.Parallel()
 	dynClient := newDynamicClient(t)

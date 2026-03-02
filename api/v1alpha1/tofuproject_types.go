@@ -52,6 +52,13 @@ type ParamFromSource struct {
 	SecretRef    *ObjectRef `json:"secretRef,omitempty"`
 }
 
+type ValuesFromSource struct {
+	// configMapRef is the name of a ConfigMap to import all keys from.
+	ConfigMapRef string `json:"configMapRef,omitempty"`
+	// secretRef is the name of a Secret to import all keys from.
+	SecretRef string `json:"secretRef,omitempty"`
+}
+
 type ParamBinding struct {
 	Name            string  `json:"name"`
 	ConfigMapKeyRef *KeyRef `json:"configMapKeyRef,omitempty"`
@@ -143,6 +150,10 @@ type TofuProjectSpec struct {
 	// paramBindings maps individual ConfigMap/Secret keys to named params (medium precedence)
 	ParamBindings []ParamBinding `json:"paramBindings,omitempty"`
 
+	// valuesFrom is an ordered list of ConfigMaps/Secrets to bulk-import as params.
+	// Later entries override earlier ones. Lowest precedence (paramFrom, paramBindings, params all override).
+	ValuesFrom []ValuesFromSource `json:"valuesFrom,omitempty"`
+
 	// workspace name (optional)
 	Workspace string `json:"workspace,omitempty"`
 
@@ -231,6 +242,10 @@ type TofuProjectSpec struct {
 	// Plans auto-apply only during the configured maintenance window (cron + duration).
 	// Only meaningful when autoApprove is false.
 	ApplySchedule *ApplyScheduleSpec `json:"applySchedule,omitempty"`
+
+	// ttl specifies how long the project lives after creation before auto-deletion.
+	// Uses Go duration format (e.g. "24h", "168h"). Empty = no TTL.
+	TTL string `json:"ttl,omitempty"`
 }
 
 type TofuProjectStatus struct {
@@ -251,6 +266,8 @@ type TofuProjectStatus struct {
 	LastDriftCheckTime *metav1.Time        `json:"lastDriftCheckTime,omitempty"`
 	DriftDetected      bool                `json:"driftDetected,omitempty"`
 	BlastRadius        *BlastRadiusSummary `json:"blastRadius,omitempty"`
+	// ExpiresAt is when this project will be auto-deleted due to TTL.
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -371,6 +388,10 @@ func deepCopySpecSlices(in, out *TofuProjectSpec) {
 			}
 		}
 	}
+	if in.ValuesFrom != nil {
+		out.ValuesFrom = make([]ValuesFromSource, len(in.ValuesFrom))
+		copy(out.ValuesFrom, in.ValuesFrom)
+	}
 	if in.Dependencies != nil {
 		out.Dependencies = make([]ProjectDependency, len(in.Dependencies))
 		for i, dep := range in.Dependencies {
@@ -480,6 +501,10 @@ func deepCopyStatus(in, out *TofuProjectStatus) {
 	if in.BlastRadius != nil {
 		brCopy := *in.BlastRadius
 		out.BlastRadius = &brCopy
+	}
+	if in.ExpiresAt != nil {
+		t := *in.ExpiresAt
+		out.ExpiresAt = &t
 	}
 	if in.Conditions != nil {
 		out.Conditions = make([]metav1.Condition, len(in.Conditions))

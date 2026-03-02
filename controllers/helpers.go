@@ -340,6 +340,19 @@ func mergeLabels(existing, add map[string]string) map[string]string {
 	return existing
 }
 
+// parseTTL parses a TTL duration string.
+// Returns 0 on empty string, parse error, or non-positive duration (meaning no TTL).
+func parseTTL(s string) time.Duration {
+	if s == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
+}
+
 // parseSyncInterval parses a duration string for the sync interval.
 // Returns 0 on empty string or parse error (meaning no periodic requeue).
 func parseSyncInterval(s string) time.Duration {

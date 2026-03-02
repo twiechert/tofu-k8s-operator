@@ -99,14 +99,26 @@ func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	syncInterval := parseSyncInterval(project.Spec.SyncInterval)
 	cacheEnabled := rp.cacheMode != ""
 	if project.Spec.AutoApprove {
-		return r.reconcileAutoApprove(ctx, &project, &rp.program, rp.appliedHash, rp.cmName, rp.image, syncInterval, cacheEnabled, rp.cachePVCName, rp.saName)
+		result, err = r.reconcileAutoApprove(ctx, &project, &rp.program, rp.appliedHash, rp.cmName, rp.image, syncInterval, cacheEnabled, rp.cachePVCName, rp.saName)
+	} else {
+		result, err = r.reconcilePlanApprove(ctx, &project, &rp.program, rp.appliedHash, rp.cmName, rp.image, syncInterval, cacheEnabled, rp.cachePVCName, rp.saName)
 	}
-	return r.reconcilePlanApprove(ctx, &project, &rp.program, rp.appliedHash, rp.cmName, rp.image, syncInterval, cacheEnabled, rp.cachePVCName, rp.saName)
+
+	// Clamp RequeueAfter to not exceed TTL remaining
+	if ttl := parseTTL(project.Spec.TTL); ttl > 0 {
+		remaining := time.Until(project.CreationTimestamp.Add(ttl))
+		if remaining > 0 && (result.RequeueAfter == 0 || remaining < result.RequeueAfter) {
+			result.RequeueAfter = remaining
+		}
+	}
+
+	return result, err
 }
 
 // handleLifecycle handles deletion, finalizer, suspend, and pinned revision.
 // Returns (done=true, result, err) if the caller should return immediately.
 func (r *TofuProjectReconciler) handleLifecycle(ctx context.Context, project *tofuv1alpha1.TofuProject) (bool, ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
 	// Handle deletion — run tofu destroy before allowing CR removal
 	if !project.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(project, finalizerName) {
@@ -122,6 +134,26 @@ func (r *TofuProjectReconciler) handleLifecycle(ctx context.Context, project *to
 		if err := r.Update(ctx, project); err != nil {
 			return true, ctrl.Result{}, err
 		}
+	}
+
+	// TTL — auto-delete after configured duration
+	if ttl := parseTTL(project.Spec.TTL); ttl > 0 {
+		expiresAt := project.CreationTimestamp.Add(ttl)
+		metaExpiry := metav1.NewTime(expiresAt)
+		if project.Status.ExpiresAt == nil || !project.Status.ExpiresAt.Equal(&metaExpiry) {
+			project.Status.ExpiresAt = &metaExpiry
+			r.updateStatusWithCondition(ctx, project)
+		}
+		if time.Now().After(expiresAt) {
+			log.Info("TTL expired, deleting TofuProject", "name", project.Name, "ttl", project.Spec.TTL)
+			if err := r.Delete(ctx, project); err != nil {
+				return true, ctrl.Result{}, err
+			}
+			return true, ctrl.Result{}, nil
+		}
+	} else if project.Status.ExpiresAt != nil {
+		project.Status.ExpiresAt = nil
+		r.updateStatusWithCondition(ctx, project)
 	}
 
 	// Suspend check — pause reconciliation entirely

@@ -124,6 +124,18 @@ spec:
                         properties:
                           name: {type: string}
                           key: {type: string}
+                valuesFrom:
+                  type: array
+                  description: "Ordered list of ConfigMaps/Secrets to import as params. Later entries override earlier ones. Lowest precedence."
+                  items:
+                    type: object
+                    properties:
+                      configMapRef:
+                        type: string
+                        description: "Name of a ConfigMap to import all keys from"
+                      secretRef:
+                        type: string
+                        description: "Name of a Secret to import all keys from"
                 workspace: {type: string}
                 image: {type: string}
                 autoApprove: {type: boolean}
@@ -333,6 +345,9 @@ spec:
                     window:
                       type: string
                       description: "How long the apply window stays open after the cron fires. Default: 1h"
+                ttl:
+                  type: string
+                  description: "How long the project lives after creation before auto-deletion (e.g. '24h', '168h'). Empty = no TTL."
             status:
               type: object
               properties:
@@ -363,6 +378,9 @@ spec:
                     change: {type: integer, format: int32}
                     destroy: {type: integer, format: int32}
                     total: {type: integer, format: int32}
+                expiresAt:
+                  type: string
+                  format: date-time
                 conditions:
                   type: array
                   items:

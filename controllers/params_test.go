@@ -314,3 +314,188 @@ func TestProjectReferencesSecret(t *testing.T) {
 		t.Fatal("should not match different namespace")
 	}
 }
+
+func TestResolveValuesFrom_ConfigMap(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "global-defaults", Namespace: "default"},
+		Data:       map[string]string{"region": "us-west-2", "env": "staging"},
+	}
+	r := newTestReconciler(cm)
+
+	project := &tofuv1alpha1.TofuProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: tofuv1alpha1.TofuProjectSpec{
+			ValuesFrom: []tofuv1alpha1.ValuesFromSource{
+				{ConfigMapRef: "global-defaults"},
+			},
+		},
+	}
+
+	resolved, _, err := r.resolveExternalParams(context.Background(), project)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved["region"] != "us-west-2" {
+		t.Fatalf("expected region=us-west-2, got %q", resolved["region"])
+	}
+	if resolved["env"] != "staging" {
+		t.Fatalf("expected env=staging, got %q", resolved["env"])
+	}
+}
+
+func TestResolveValuesFrom_Secret(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "sensitive-values", Namespace: "default"},
+		Data:       map[string][]byte{"api_key": []byte("secret123")},
+	}
+	r := newTestReconciler(secret)
+
+	project := &tofuv1alpha1.TofuProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: tofuv1alpha1.TofuProjectSpec{
+			ValuesFrom: []tofuv1alpha1.ValuesFromSource{
+				{SecretRef: "sensitive-values"},
+			},
+		},
+	}
+
+	resolved, _, err := r.resolveExternalParams(context.Background(), project)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved["api_key"] != "secret123" {
+		t.Fatalf("expected api_key=secret123, got %q", resolved["api_key"])
+	}
+}
+
+func TestResolveValuesFrom_LayeringOrder(t *testing.T) {
+	cm1 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "global-defaults", Namespace: "default"},
+		Data:       map[string]string{"region": "us-west-2", "env": "dev"},
+	}
+	cm2 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "env-overrides", Namespace: "default"},
+		Data:       map[string]string{"env": "prod"},
+	}
+	r := newTestReconciler(cm1, cm2)
+
+	project := &tofuv1alpha1.TofuProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: tofuv1alpha1.TofuProjectSpec{
+			ValuesFrom: []tofuv1alpha1.ValuesFromSource{
+				{ConfigMapRef: "global-defaults"},
+				{ConfigMapRef: "env-overrides"},
+			},
+		},
+	}
+
+	resolved, _, err := r.resolveExternalParams(context.Background(), project)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// region from first entry should remain
+	if resolved["region"] != "us-west-2" {
+		t.Fatalf("expected region=us-west-2, got %q", resolved["region"])
+	}
+	// env should be overridden by second entry
+	if resolved["env"] != "prod" {
+		t.Fatalf("expected env=prod (from env-overrides), got %q", resolved["env"])
+	}
+}
+
+func TestResolveValuesFrom_PrecedenceVsParamFrom(t *testing.T) {
+	valuesFromCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "values-cm", Namespace: "default"},
+		Data:       map[string]string{"key1": "from-valuesFrom", "key2": "values-only"},
+	}
+	paramFromCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "param-cm", Namespace: "default"},
+		Data:       map[string]string{"key1": "from-paramFrom"},
+	}
+	r := newTestReconciler(valuesFromCM, paramFromCM)
+
+	project := &tofuv1alpha1.TofuProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: tofuv1alpha1.TofuProjectSpec{
+			ValuesFrom: []tofuv1alpha1.ValuesFromSource{
+				{ConfigMapRef: "values-cm"},
+			},
+			ParamFrom: []tofuv1alpha1.ParamFromSource{
+				{ConfigMapRef: &tofuv1alpha1.ObjectRef{Name: "param-cm"}},
+			},
+		},
+	}
+
+	resolved, _, err := r.resolveExternalParams(context.Background(), project)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// paramFrom should override valuesFrom for key1
+	if resolved["key1"] != "from-paramFrom" {
+		t.Fatalf("expected key1=from-paramFrom, got %q", resolved["key1"])
+	}
+	// key2 should remain from valuesFrom
+	if resolved["key2"] != "values-only" {
+		t.Fatalf("expected key2=values-only, got %q", resolved["key2"])
+	}
+}
+
+func TestResolveValuesFrom_MissingConfigMap(t *testing.T) {
+	r := newTestReconciler()
+
+	project := &tofuv1alpha1.TofuProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: tofuv1alpha1.TofuProjectSpec{
+			ValuesFrom: []tofuv1alpha1.ValuesFromSource{
+				{ConfigMapRef: "does-not-exist"},
+			},
+		},
+	}
+
+	_, _, err := r.resolveExternalParams(context.Background(), project)
+	if err == nil {
+		t.Fatal("expected error for missing ConfigMap")
+	}
+}
+
+func TestProjectReferencesConfigMap_ValuesFrom(t *testing.T) {
+	project := &tofuv1alpha1.TofuProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: tofuv1alpha1.TofuProjectSpec{
+			ValuesFrom: []tofuv1alpha1.ValuesFromSource{
+				{ConfigMapRef: "vf-config"},
+			},
+		},
+	}
+
+	if !projectReferencesConfigMap(project, "vf-config", "default") {
+		t.Fatal("expected project to reference vf-config via valuesFrom")
+	}
+	if projectReferencesConfigMap(project, "vf-config", "other-ns") {
+		t.Fatal("should not match different namespace")
+	}
+	if projectReferencesConfigMap(project, "other-cm", "default") {
+		t.Fatal("should not reference unrelated ConfigMap")
+	}
+}
+
+func TestProjectReferencesSecret_ValuesFrom(t *testing.T) {
+	project := &tofuv1alpha1.TofuProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: tofuv1alpha1.TofuProjectSpec{
+			ValuesFrom: []tofuv1alpha1.ValuesFromSource{
+				{SecretRef: "vf-secret"},
+			},
+		},
+	}
+
+	if !projectReferencesSecret(project, "vf-secret", "default") {
+		t.Fatal("expected project to reference vf-secret via valuesFrom")
+	}
+	if projectReferencesSecret(project, "vf-secret", "other-ns") {
+		t.Fatal("should not match different namespace")
+	}
+	if projectReferencesSecret(project, "other-secret", "default") {
+		t.Fatal("should not reference unrelated Secret")
+	}
+}
