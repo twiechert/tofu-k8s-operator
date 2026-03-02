@@ -61,14 +61,27 @@ type reconcileParams struct {
 	cachePVCName string
 }
 
-func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *TofuProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
 	log := ctrl.LoggerFrom(ctx)
 	log.Info("reconciling TofuProject", "name", req.Name, "namespace", req.Namespace)
 
 	var project tofuv1alpha1.TofuProject
 	if err := r.Get(ctx, req.NamespacedName, &project); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if apierrors.IsNotFound(err) {
+			deleteProjectMetrics(req.Namespace, req.Name)
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
 	}
+
+	recordInfo(&project)
+	defer func() {
+		res := "success"
+		if retErr != nil {
+			res = "error"
+		}
+		reconcileTotal.WithLabelValues(project.Namespace, project.Name, res).Inc()
+	}()
 
 	done, result, err := r.handleLifecycle(ctx, &project)
 	if err != nil || done {
@@ -480,6 +493,7 @@ func (r *TofuProjectReconciler) reconcileAutoApprove(ctx context.Context, projec
 func (r *TofuProjectReconciler) handleApplyJobResult(ctx context.Context, project *tofuv1alpha1.TofuProject, job *batchv1.Job, appliedHash, jobName string) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 	if job.Status.Succeeded > 0 {
+		applyTotal.WithLabelValues(project.Namespace, project.Name, "succeeded").Inc()
 		jobLogs, logsErr := r.readJobLogs(ctx, job)
 		if logsErr != nil {
 			log.Error(logsErr, "failed to read apply job logs (non-fatal)")
@@ -517,6 +531,7 @@ func (r *TofuProjectReconciler) handleApplyJobResult(ctx context.Context, projec
 			r.updateStatusWithCondition(ctx, project)
 			return ctrl.Result{RequeueAfter: delay}, nil
 		}
+		applyTotal.WithLabelValues(project.Namespace, project.Name, "failed").Inc()
 		failLogs, logsErr := r.readJobLogs(ctx, job)
 		if logsErr != nil {
 			log.Error(logsErr, "failed to read failed job logs (non-fatal)")
@@ -642,6 +657,7 @@ func (r *TofuProjectReconciler) handlePlanJobStatus(ctx context.Context, project
 		return r.handlePlanSuccess(ctx, project, planJob, appliedHash)
 	}
 	if planJob.Status.Failed > 0 {
+		planTotal.WithLabelValues(project.Namespace, project.Name, "failed").Inc()
 		output, err := r.readJobLogs(ctx, planJob)
 		if err != nil {
 			output = fmt.Sprintf("(failed to read plan logs: %v)", err)
@@ -677,11 +693,14 @@ func (r *TofuProjectReconciler) handlePlanSuccess(ctx context.Context, project *
 	planSummary := extractPlanSummary(output)
 	blastRadius := parsePlanCounts(planSummary)
 
+	planTotal.WithLabelValues(project.Namespace, project.Name, "succeeded").Inc()
+
 	project.Status.PendingPlanHash = appliedHash
 	project.Status.PlanOutput = output
 	project.Status.PlanSummary = planSummary
 	project.Status.BlastRadius = blastRadius
 	project.Status.LastPlanJobName = planJob.Name
+	recordBlastRadius(project)
 
 	if autoApproved, result, err := r.checkAutoApproveThreshold(ctx, project, blastRadius, appliedHash); autoApproved {
 		return result, err
@@ -763,6 +782,7 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 
 	// Job exists — check its status
 	if job.Status.Succeeded > 0 {
+		applyTotal.WithLabelValues(project.Namespace, project.Name, "succeeded").Inc()
 		// Capture outputs from apply logs
 		outputs, err := r.captureOutputs(ctx, job)
 		if err != nil {
@@ -807,6 +827,7 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 			r.updateStatusWithCondition(ctx, project)
 			return ctrl.Result{RequeueAfter: delay}, nil
 		}
+		applyTotal.WithLabelValues(project.Namespace, project.Name, "failed").Inc()
 		// Read job logs for failure audit
 		failLogs, logsErr := r.readJobLogs(ctx, job)
 		if logsErr != nil {
@@ -863,11 +884,14 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 	}
 
 	if job.Status.Succeeded > 0 {
+		applyTotal.WithLabelValues(project.Namespace, project.Name, "succeeded").Inc()
 		log.Info("destroy succeeded, removing finalizer", "name", project.Name)
+		deleteProjectMetrics(project.Namespace, project.Name)
 		controllerutil.RemoveFinalizer(project, finalizerName)
 		return ctrl.Result{}, r.Update(ctx, project)
 	}
 	if job.Status.Failed > 0 {
+		applyTotal.WithLabelValues(project.Namespace, project.Name, "failed").Inc()
 		project.Status.Phase = "DestroyFailed"
 		project.Status.Message = "Destroy job failed"
 		r.updateStatusWithCondition(ctx, project)

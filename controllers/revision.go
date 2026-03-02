@@ -303,6 +303,7 @@ func (r *TofuProjectReconciler) createPinnedApplyJob(ctx context.Context, projec
 // handlePinnedJobResult checks the status of a pinned apply job.
 func (r *TofuProjectReconciler) handlePinnedJobResult(ctx context.Context, project *tofuv1alpha1.TofuProject, job *batchv1.Job, pinnedHash, jobName string, revNum int32) (ctrl.Result, error) {
 	if job.Status.Succeeded > 0 {
+		applyTotal.WithLabelValues(project.Namespace, project.Name, "succeeded").Inc()
 		log := ctrl.LoggerFrom(ctx)
 		outputs, err := r.captureOutputs(ctx, job)
 		if err != nil {
@@ -323,6 +324,7 @@ func (r *TofuProjectReconciler) handlePinnedJobResult(ctx context.Context, proje
 		return ctrl.Result{}, nil
 	}
 	if job.Status.Failed > 0 {
+		applyTotal.WithLabelValues(project.Namespace, project.Name, "failed").Inc()
 		project.Status.Phase = "Error"
 		project.Status.LastJobName = jobName
 		project.Status.Message = fmt.Sprintf("Pinned revision %d apply failed", revNum)

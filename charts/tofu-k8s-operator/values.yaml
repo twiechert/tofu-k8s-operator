@@ -8,3 +8,9 @@ replicaCount: 1
 metricsBindAddress: ":8080"
 healthProbeBindAddress: ":8081"
 leaderElect: false
+
+serviceMonitor:
+  enabled: false
+  interval: "30s"
+  labels: {}
+  namespace: ""

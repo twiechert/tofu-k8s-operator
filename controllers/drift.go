@@ -119,6 +119,7 @@ func (r *TofuProjectReconciler) handleCompletedDriftJob(ctx context.Context, pro
 	now := metav1.Now()
 	project.Status.LastDriftCheckTime = &now
 	project.Status.BlastRadius = blastRadius
+	recordBlastRadius(project)
 	if summary == "No changes." || summary == "" {
 		project.Status.DriftDetected = false
 		project.Status.Phase = "Succeeded"
@@ -130,6 +131,7 @@ func (r *TofuProjectReconciler) handleCompletedDriftJob(ctx context.Context, pro
 		log.Info("drift check: drift detected", "summary", summary)
 		sendNotification(ctx, project, "drift:detected")
 	}
+	recordDrift(project)
 	r.updateStatusWithCondition(ctx, project)
 }
 

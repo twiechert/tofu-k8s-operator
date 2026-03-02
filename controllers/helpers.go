@@ -30,6 +30,7 @@ import (
 // updateStatusWithCondition updates the status subresource and automatically sets the Ready condition.
 func (r *TofuProjectReconciler) updateStatusWithCondition(ctx context.Context, project *tofuv1alpha1.TofuProject) {
 	updateReadyCondition(project)
+	recordPhase(project)
 	_ = r.Status().Update(ctx, project)
 }
 
