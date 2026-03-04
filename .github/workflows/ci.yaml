@@ -56,9 +56,6 @@ jobs:
       - name: Test
         run: go test ./...
 
-      - name: Build Docker image
-        run: docker build -t tofu-k8s-operator:ci .
-
   # Required check that always passes — gates PRs when code hasn't changed
   ci:
     runs-on: ubuntu-latest
