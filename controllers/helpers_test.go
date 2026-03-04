@@ -83,6 +83,34 @@ func TestParseJobTimeout_Negative(t *testing.T) {
 	}
 }
 
+func TestParseIdleTimeout_Empty(t *testing.T) {
+	d := parseIdleTimeout("")
+	if d != 0 {
+		t.Fatalf("expected 0, got %v", d)
+	}
+}
+
+func TestParseIdleTimeout_Valid(t *testing.T) {
+	d := parseIdleTimeout("5m")
+	if d != 5*time.Minute {
+		t.Fatalf("expected 5m, got %v", d)
+	}
+}
+
+func TestParseIdleTimeout_Invalid(t *testing.T) {
+	d := parseIdleTimeout("notaduration")
+	if d != 0 {
+		t.Fatalf("expected 0 for invalid input, got %v", d)
+	}
+}
+
+func TestParseIdleTimeout_Negative(t *testing.T) {
+	d := parseIdleTimeout("-5m")
+	if d != 0 {
+		t.Fatalf("expected 0 for negative input, got %v", d)
+	}
+}
+
 func TestIsStateLockError_AcquiringLock(t *testing.T) {
 	logs := "Error: Error acquiring the state lock\nsome other output"
 	if !isStateLockError(logs) {

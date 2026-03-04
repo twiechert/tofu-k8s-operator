@@ -215,6 +215,10 @@ type TofuProjectSpec struct {
 	// Uses Go duration format (e.g. "30m", "1h"). Default: "30m".
 	JobTimeout string `json:"jobTimeout,omitempty"`
 
+	// idleTimeout kills a running Job if no log output is produced for this duration.
+	// Uses Go duration format (e.g. "5m", "10m"). Empty = disabled (only hard jobTimeout applies).
+	IdleTimeout string `json:"idleTimeout,omitempty"`
+
 	// driftDetection configures periodic drift checking.
 	DriftDetection *DriftDetectionSpec `json:"driftDetection,omitempty"`
 

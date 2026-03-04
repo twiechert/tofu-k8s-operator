@@ -706,7 +706,16 @@ func (r *TofuProjectReconciler) handleApplyJobResult(ctx context.Context, projec
 		return ctrl.Result{}, nil
 	}
 
-	// Job still running
+	// Job still running — check idle timeout
+	if idleTimeout := parseIdleTimeout(project.Spec.IdleTimeout); idleTimeout > 0 {
+		if r.checkJobIdle(ctx, job, idleTimeout) {
+			log.Info("job idle timeout exceeded, deleting job", "job", job.Name, "idleTimeout", idleTimeout)
+			_ = r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))
+			project.Status.Message = fmt.Sprintf("Job killed: no output for %s", idleTimeout)
+			r.updateStatusWithCondition(ctx, project)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+	}
 	project.Status.Phase = "Running"
 	project.Status.LastJobName = jobName
 	r.updateStatusWithCondition(ctx, project)
@@ -843,7 +852,17 @@ func (r *TofuProjectReconciler) handlePlanJobStatus(ctx context.Context, project
 		return ctrl.Result{}, nil
 	}
 
-	// Still running
+	// Still running — check idle timeout
+	if idleTimeout := parseIdleTimeout(project.Spec.IdleTimeout); idleTimeout > 0 {
+		if r.checkJobIdle(ctx, planJob, idleTimeout) {
+			log := ctrl.LoggerFrom(ctx)
+			log.Info("job idle timeout exceeded, deleting job", "job", planJob.Name, "idleTimeout", idleTimeout)
+			_ = r.Delete(ctx, planJob, client.PropagationPolicy(metav1.DeletePropagationBackground))
+			project.Status.Message = fmt.Sprintf("Job killed: no output for %s", idleTimeout)
+			r.updateStatusWithCondition(ctx, project)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+	}
 	project.Status.Phase = "Planning"
 	project.Status.LastPlanJobName = planJob.Name
 	r.updateStatusWithCondition(ctx, project)
@@ -1024,7 +1043,16 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		return ctrl.Result{}, nil
 	}
 
-	// Job still running
+	// Job still running — check idle timeout
+	if idleTimeout := parseIdleTimeout(project.Spec.IdleTimeout); idleTimeout > 0 {
+		if r.checkJobIdle(ctx, job, idleTimeout) {
+			log.Info("job idle timeout exceeded, deleting job", "job", job.Name, "idleTimeout", idleTimeout)
+			_ = r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))
+			project.Status.Message = fmt.Sprintf("Job killed: no output for %s", idleTimeout)
+			r.updateStatusWithCondition(ctx, project)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+	}
 	project.Status.Phase = "Running"
 	project.Status.LastJobName = jobName
 	r.updateStatusWithCondition(ctx, project)
@@ -1079,6 +1107,16 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 		return ctrl.Result{}, nil
 	}
 
+	// Still running — check idle timeout
+	if idleTimeout := parseIdleTimeout(project.Spec.IdleTimeout); idleTimeout > 0 {
+		if r.checkJobIdle(ctx, &job, idleTimeout) {
+			log.Info("job idle timeout exceeded, deleting job", "job", job.Name, "idleTimeout", idleTimeout)
+			_ = r.Delete(ctx, &job, client.PropagationPolicy(metav1.DeletePropagationBackground))
+			project.Status.Message = fmt.Sprintf("Job killed: no output for %s", idleTimeout)
+			r.updateStatusWithCondition(ctx, project)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+	}
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 

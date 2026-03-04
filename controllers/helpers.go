@@ -366,6 +366,57 @@ func parseJobTimeout(s string) time.Duration {
 	return d
 }
 
+// parseIdleTimeout parses an idle timeout duration string.
+// Returns 0 on empty string, parse error, or non-positive duration (meaning disabled).
+func parseIdleTimeout(s string) time.Duration {
+	if s == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
+}
+
+// checkJobIdle checks if the job's tofu container has produced any log output within the idle window.
+// Returns true if the job is idle (no recent output).
+func (r *TofuProjectReconciler) checkJobIdle(ctx context.Context, job *batchv1.Job, idleTimeout time.Duration) bool {
+	// Don't check if job hasn't been running long enough
+	if job.Status.StartTime == nil || time.Since(job.Status.StartTime.Time) < idleTimeout {
+		return false
+	}
+
+	if r.Clientset == nil {
+		return false
+	}
+
+	pods, err := r.Clientset.CoreV1().Pods(job.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("job-name=%s", job.Name),
+	})
+	if err != nil || len(pods.Items) == 0 {
+		return false
+	}
+
+	podName := pods.Items[0].Name
+	sinceSeconds := int64(idleTimeout.Seconds())
+	var limitBytes int64 = 1
+	req := r.Clientset.CoreV1().Pods(job.Namespace).GetLogs(podName, &corev1.PodLogOptions{
+		Container:    "tofu",
+		SinceSeconds: &sinceSeconds,
+		LimitBytes:   &limitBytes,
+	})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return false
+	}
+	defer stream.Close()
+
+	buf := make([]byte, 1)
+	n, _ := stream.Read(buf)
+	return n == 0 // idle = no recent output
+}
+
 // isStateLockError checks if the logs contain an OpenTofu state lock error.
 func isStateLockError(logs string) bool {
 	return strings.Contains(logs, "Error acquiring the state lock") ||

@@ -280,6 +280,9 @@ spec:
                 jobTimeout:
                   type: string
                   description: "Maximum duration a Job is allowed to run (e.g. '30m', '1h'). Default: 30m."
+                idleTimeout:
+                  type: string
+                  description: "Kill a running Job if no log output for this duration (e.g. '5m', '10m'). Empty = disabled."
                 driftDetection:
                   type: object
                   properties:
