@@ -83,31 +83,91 @@ func TestParseJobTimeout_Negative(t *testing.T) {
 	}
 }
 
-func TestParseIdleTimeout_Empty(t *testing.T) {
-	d := parseIdleTimeout("")
+func TestParseResourceTimeout_Empty(t *testing.T) {
+	d := parseResourceTimeout("")
 	if d != 0 {
 		t.Fatalf("expected 0, got %v", d)
 	}
 }
 
-func TestParseIdleTimeout_Valid(t *testing.T) {
-	d := parseIdleTimeout("5m")
+func TestParseResourceTimeout_Valid(t *testing.T) {
+	d := parseResourceTimeout("5m")
 	if d != 5*time.Minute {
 		t.Fatalf("expected 5m, got %v", d)
 	}
 }
 
-func TestParseIdleTimeout_Invalid(t *testing.T) {
-	d := parseIdleTimeout("notaduration")
+func TestParseResourceTimeout_Invalid(t *testing.T) {
+	d := parseResourceTimeout("notaduration")
 	if d != 0 {
 		t.Fatalf("expected 0 for invalid input, got %v", d)
 	}
 }
 
-func TestParseIdleTimeout_Negative(t *testing.T) {
-	d := parseIdleTimeout("-5m")
+func TestParseResourceTimeout_Negative(t *testing.T) {
+	d := parseResourceTimeout("-5m")
 	if d != 0 {
 		t.Fatalf("expected 0 for negative input, got %v", d)
+	}
+}
+
+func TestParseStuckResource_StillCreating(t *testing.T) {
+	logs := "aws_eks_cluster.this: Still creating... [25m0s elapsed]"
+	res, elapsed := parseStuckResource(logs, 20*time.Minute)
+	if res != "aws_eks_cluster.this" {
+		t.Fatalf("expected resource 'aws_eks_cluster.this', got %q", res)
+	}
+	if elapsed != 25*time.Minute {
+		t.Fatalf("expected 25m, got %v", elapsed)
+	}
+}
+
+func TestParseStuckResource_UnderThreshold(t *testing.T) {
+	logs := "aws_eks_cluster.this: Still creating... [5m0s elapsed]"
+	res, _ := parseStuckResource(logs, 20*time.Minute)
+	if res != "" {
+		t.Fatalf("expected empty resource for under-threshold, got %q", res)
+	}
+}
+
+func TestParseStuckResource_StillDestroying(t *testing.T) {
+	logs := "aws_vpc.main: Still destroying... [30m0s elapsed]"
+	res, elapsed := parseStuckResource(logs, 20*time.Minute)
+	if res != "aws_vpc.main" {
+		t.Fatalf("expected resource 'aws_vpc.main', got %q", res)
+	}
+	if elapsed != 30*time.Minute {
+		t.Fatalf("expected 30m, got %v", elapsed)
+	}
+}
+
+func TestParseStuckResource_NoProgressLines(t *testing.T) {
+	logs := "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.\nOutputs:\nid = abc123"
+	res, _ := parseStuckResource(logs, 20*time.Minute)
+	if res != "" {
+		t.Fatalf("expected empty resource for no progress lines, got %q", res)
+	}
+}
+
+func TestParseStuckResource_MultipleResources(t *testing.T) {
+	logs := "aws_s3_bucket.logs: Still creating... [5m0s elapsed]\naws_eks_cluster.this: Still creating... [25m0s elapsed]"
+	res, elapsed := parseStuckResource(logs, 20*time.Minute)
+	if res != "aws_eks_cluster.this" {
+		t.Fatalf("expected resource 'aws_eks_cluster.this', got %q", res)
+	}
+	if elapsed != 25*time.Minute {
+		t.Fatalf("expected 25m, got %v", elapsed)
+	}
+}
+
+func TestParseStuckResource_ModulePrefix(t *testing.T) {
+	logs := "module.foo.aws_eks_cluster.this: Still creating... [25m0s elapsed]"
+	res, elapsed := parseStuckResource(logs, 20*time.Minute)
+	if res != "module.foo.aws_eks_cluster.this" {
+		t.Fatalf("expected resource 'module.foo.aws_eks_cluster.this', got %q", res)
+	}
+	if elapsed != 25*time.Minute {
+		t.Fatalf("expected 25m, got %v", elapsed)
 	}
 }
 

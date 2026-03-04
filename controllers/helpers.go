@@ -366,9 +366,9 @@ func parseJobTimeout(s string) time.Duration {
 	return d
 }
 
-// parseIdleTimeout parses an idle timeout duration string.
+// parseResourceTimeout parses a resource timeout duration string.
 // Returns 0 on empty string, parse error, or non-positive duration (meaning disabled).
-func parseIdleTimeout(s string) time.Duration {
+func parseResourceTimeout(s string) time.Duration {
 	if s == "" {
 		return 0
 	}
@@ -379,42 +379,68 @@ func parseIdleTimeout(s string) time.Duration {
 	return d
 }
 
-// checkJobIdle checks if the job's tofu container has produced any log output within the idle window.
-// Returns true if the job is idle (no recent output).
-func (r *TofuProjectReconciler) checkJobIdle(ctx context.Context, job *batchv1.Job, idleTimeout time.Duration) bool {
+var stillProgressRe = regexp.MustCompile(`(?i)^(\S+): Still (?:creating|destroying|modifying)\.{3} \[(.+) elapsed\]`)
+
+// parseStuckResource scans log lines for "Still creating/destroying/modifying... [Xm elapsed]"
+// and returns the first resource whose elapsed time meets or exceeds the threshold.
+func parseStuckResource(logs string, threshold time.Duration) (string, time.Duration) {
+	for _, line := range strings.Split(logs, "\n") {
+		m := stillProgressRe.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
+			continue
+		}
+		elapsed, err := time.ParseDuration(m[2])
+		if err != nil {
+			continue
+		}
+		if elapsed >= threshold {
+			return m[1], elapsed
+		}
+	}
+	return "", 0
+}
+
+// checkResourceTimeout checks if any resource in the job has been stuck for longer than the threshold.
+// Returns (true, resourceName, elapsed) if a stuck resource is found.
+func (r *TofuProjectReconciler) checkResourceTimeout(ctx context.Context, job *batchv1.Job, threshold time.Duration) (bool, string, time.Duration) {
 	// Don't check if job hasn't been running long enough
-	if job.Status.StartTime == nil || time.Since(job.Status.StartTime.Time) < idleTimeout {
-		return false
+	if job.Status.StartTime == nil || time.Since(job.Status.StartTime.Time) < threshold {
+		return false, "", 0
 	}
 
 	if r.Clientset == nil {
-		return false
+		return false, "", 0
 	}
 
 	pods, err := r.Clientset.CoreV1().Pods(job.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", job.Name),
 	})
 	if err != nil || len(pods.Items) == 0 {
-		return false
+		return false, "", 0
 	}
 
 	podName := pods.Items[0].Name
-	sinceSeconds := int64(idleTimeout.Seconds())
-	var limitBytes int64 = 1
+	var tailLines int64 = 100
 	req := r.Clientset.CoreV1().Pods(job.Namespace).GetLogs(podName, &corev1.PodLogOptions{
-		Container:    "tofu",
-		SinceSeconds: &sinceSeconds,
-		LimitBytes:   &limitBytes,
+		Container: "tofu",
+		TailLines: &tailLines,
 	})
 	stream, err := req.Stream(ctx)
 	if err != nil {
-		return false
+		return false, "", 0
 	}
 	defer stream.Close()
 
-	buf := make([]byte, 1)
-	n, _ := stream.Read(buf)
-	return n == 0 // idle = no recent output
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, stream); err != nil {
+		return false, "", 0
+	}
+
+	res, elapsed := parseStuckResource(buf.String(), threshold)
+	if res != "" {
+		return true, res, elapsed
+	}
+	return false, "", 0
 }
 
 // isStateLockError checks if the logs contain an OpenTofu state lock error.

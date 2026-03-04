@@ -706,12 +706,12 @@ func (r *TofuProjectReconciler) handleApplyJobResult(ctx context.Context, projec
 		return ctrl.Result{}, nil
 	}
 
-	// Job still running — check idle timeout
-	if idleTimeout := parseIdleTimeout(project.Spec.IdleTimeout); idleTimeout > 0 {
-		if r.checkJobIdle(ctx, job, idleTimeout) {
-			log.Info("job idle timeout exceeded, deleting job", "job", job.Name, "idleTimeout", idleTimeout)
+	// Job still running — check resource timeout
+	if rt := parseResourceTimeout(project.Spec.ResourceTimeout); rt > 0 {
+		if stuck, res, elapsed := r.checkResourceTimeout(ctx, job, rt); stuck {
+			log.Info("resource timeout exceeded", "job", job.Name, "resource", res, "elapsed", elapsed)
 			_ = r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))
-			project.Status.Message = fmt.Sprintf("Job killed: no output for %s", idleTimeout)
+			project.Status.Message = fmt.Sprintf("Job killed: resource %s stuck for %s (threshold %s)", res, elapsed, rt)
 			r.updateStatusWithCondition(ctx, project)
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
@@ -852,13 +852,13 @@ func (r *TofuProjectReconciler) handlePlanJobStatus(ctx context.Context, project
 		return ctrl.Result{}, nil
 	}
 
-	// Still running — check idle timeout
-	if idleTimeout := parseIdleTimeout(project.Spec.IdleTimeout); idleTimeout > 0 {
-		if r.checkJobIdle(ctx, planJob, idleTimeout) {
+	// Still running — check resource timeout
+	if rt := parseResourceTimeout(project.Spec.ResourceTimeout); rt > 0 {
+		if stuck, res, elapsed := r.checkResourceTimeout(ctx, planJob, rt); stuck {
 			log := ctrl.LoggerFrom(ctx)
-			log.Info("job idle timeout exceeded, deleting job", "job", planJob.Name, "idleTimeout", idleTimeout)
+			log.Info("resource timeout exceeded", "job", planJob.Name, "resource", res, "elapsed", elapsed)
 			_ = r.Delete(ctx, planJob, client.PropagationPolicy(metav1.DeletePropagationBackground))
-			project.Status.Message = fmt.Sprintf("Job killed: no output for %s", idleTimeout)
+			project.Status.Message = fmt.Sprintf("Job killed: resource %s stuck for %s (threshold %s)", res, elapsed, rt)
 			r.updateStatusWithCondition(ctx, project)
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
@@ -1043,12 +1043,12 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		return ctrl.Result{}, nil
 	}
 
-	// Job still running — check idle timeout
-	if idleTimeout := parseIdleTimeout(project.Spec.IdleTimeout); idleTimeout > 0 {
-		if r.checkJobIdle(ctx, job, idleTimeout) {
-			log.Info("job idle timeout exceeded, deleting job", "job", job.Name, "idleTimeout", idleTimeout)
+	// Job still running — check resource timeout
+	if rt := parseResourceTimeout(project.Spec.ResourceTimeout); rt > 0 {
+		if stuck, res, elapsed := r.checkResourceTimeout(ctx, job, rt); stuck {
+			log.Info("resource timeout exceeded", "job", job.Name, "resource", res, "elapsed", elapsed)
 			_ = r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))
-			project.Status.Message = fmt.Sprintf("Job killed: no output for %s", idleTimeout)
+			project.Status.Message = fmt.Sprintf("Job killed: resource %s stuck for %s (threshold %s)", res, elapsed, rt)
 			r.updateStatusWithCondition(ctx, project)
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
@@ -1107,12 +1107,12 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 		return ctrl.Result{}, nil
 	}
 
-	// Still running — check idle timeout
-	if idleTimeout := parseIdleTimeout(project.Spec.IdleTimeout); idleTimeout > 0 {
-		if r.checkJobIdle(ctx, &job, idleTimeout) {
-			log.Info("job idle timeout exceeded, deleting job", "job", job.Name, "idleTimeout", idleTimeout)
+	// Still running — check resource timeout
+	if rt := parseResourceTimeout(project.Spec.ResourceTimeout); rt > 0 {
+		if stuck, res, elapsed := r.checkResourceTimeout(ctx, &job, rt); stuck {
+			log.Info("resource timeout exceeded", "job", job.Name, "resource", res, "elapsed", elapsed)
 			_ = r.Delete(ctx, &job, client.PropagationPolicy(metav1.DeletePropagationBackground))
-			project.Status.Message = fmt.Sprintf("Job killed: no output for %s", idleTimeout)
+			project.Status.Message = fmt.Sprintf("Job killed: resource %s stuck for %s (threshold %s)", res, elapsed, rt)
 			r.updateStatusWithCondition(ctx, project)
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
