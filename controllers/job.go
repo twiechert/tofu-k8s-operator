@@ -416,6 +416,77 @@ func buildDestroyJob(project *tofuv1alpha1.TofuProject, jobName, cmName, image s
 	return job
 }
 
+// buildForceUnlockJob creates a Job that runs `tofu force-unlock -force`.
+func buildForceUnlockJob(project *tofuv1alpha1.TofuProject, jobName, cmName, image, saName string) *batchv1.Job {
+	backoff := int32(0)
+	deadline := int64(300) // 5 minutes
+
+	copyStep := "cp /tf-config/* /work/"
+	stripSteps := renderStripBackendStep()
+
+	script := fmt.Sprintf(`set -euo pipefail
+%s
+%stofu init -input=false
+tofu force-unlock -force
+`, copyStep, stripSteps)
+
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName,
+			Namespace: project.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "tofu-k8s-operator",
+				"tofu.example.com/project":     project.Name,
+				"tofu.example.com/job-type":    "force-unlock",
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:          &backoff,
+			ActiveDeadlineSeconds: &deadline,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					ServiceAccountName: saName,
+					RestartPolicy:      corev1.RestartPolicyNever,
+					Containers: []corev1.Container{{
+						Name:       "tofu",
+						Image:      image,
+						WorkingDir: "/work",
+						Command:    []string{"/bin/sh", "-c", script},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "tf-config",
+							MountPath: "/tf-config",
+							ReadOnly:  true,
+						}, {
+							Name:      "work",
+							MountPath: "/work",
+						}},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "tf-config",
+						VolumeSource: corev1.VolumeSource{
+							ConfigMap: &corev1.ConfigMapVolumeSource{
+								LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+							},
+						},
+					}, {
+						Name: "work",
+						VolumeSource: corev1.VolumeSource{
+							EmptyDir: &corev1.EmptyDirVolumeSource{},
+						},
+					}},
+				},
+			},
+		},
+	}
+}
+
+// setJobTimeout sets ActiveDeadlineSeconds on the Job spec based on the project's jobTimeout.
+func setJobTimeout(job *batchv1.Job, project *tofuv1alpha1.TofuProject) {
+	timeout := parseJobTimeout(project.Spec.JobTimeout)
+	seconds := int64(timeout.Seconds())
+	job.Spec.ActiveDeadlineSeconds = &seconds
+}
+
 // addCacheToJob injects the cache PVC volume, mount, and env var into a Job.
 func addCacheToJob(job *batchv1.Job, pvcName string) {
 	job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{

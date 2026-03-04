@@ -211,6 +211,10 @@ type TofuProjectSpec struct {
 	// retryPolicy configures retry behavior for failed Jobs.
 	RetryPolicy *RetryPolicy `json:"retryPolicy,omitempty"`
 
+	// jobTimeout is the maximum duration a Job is allowed to run before being killed.
+	// Uses Go duration format (e.g. "30m", "1h"). Default: "30m".
+	JobTimeout string `json:"jobTimeout,omitempty"`
+
 	// driftDetection configures periodic drift checking.
 	DriftDetection *DriftDetectionSpec `json:"driftDetection,omitempty"`
 
@@ -266,6 +270,8 @@ type TofuProjectStatus struct {
 	LastDriftCheckTime *metav1.Time        `json:"lastDriftCheckTime,omitempty"`
 	DriftDetected      bool                `json:"driftDetected,omitempty"`
 	BlastRadius        *BlastRadiusSummary `json:"blastRadius,omitempty"`
+	// StateLocked is true when the last job failure was due to a state lock error.
+	StateLocked bool `json:"stateLocked,omitempty"`
 	// ExpiresAt is when this project will be auto-deleted due to TTL.
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 }

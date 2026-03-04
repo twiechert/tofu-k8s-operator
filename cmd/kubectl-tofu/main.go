@@ -90,6 +90,10 @@ func main() {
 		rev2Str := os.Args[4]
 		ns := parseNamespaceOnly(5)
 		cmdDiff(name, ns, rev1Str, rev2Str)
+	case "force-unlock":
+		requireArgs(2, "force-unlock <project> [-n namespace]")
+		name, ns := parseNameAndNamespace(2)
+		cmdForceUnlock(name, ns)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		usage()
@@ -112,6 +116,7 @@ Commands:
   pin       Pin to a stored revision for rollback
   unpin     Resume normal flow (remove pin)
   diff      Compare two revisions
+  force-unlock  Force-unlock a locked state
 `)
 }
 
@@ -247,6 +252,26 @@ func cmdDelete(name, ns string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Approved delete for %s/%s\n", ns, name)
+}
+
+func cmdForceUnlock(name, ns string) {
+	client := newDynamicClient()
+	ctx := context.Background()
+
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]interface{}{
+				"tofu.example.com/force-unlock": "true",
+			},
+		},
+	}
+	patchBytes, _ := json.Marshal(patch)
+	_, err := client.Resource(tofuProjectGVR).Namespace(ns).Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error triggering force-unlock for %s/%s: %v\n", ns, name, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Triggered force-unlock for %s/%s\n", ns, name)
 }
 
 func cmdSuspend(name, ns string) {

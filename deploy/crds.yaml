@@ -277,6 +277,9 @@ spec:
                     delay:
                       type: string
                       description: "Delay between retries (e.g. '30s', '1m'). Default: 30s"
+                jobTimeout:
+                  type: string
+                  description: "Maximum duration a Job is allowed to run (e.g. '30m', '1h'). Default: 30m."
                 driftDetection:
                   type: object
                   properties:
@@ -378,6 +381,7 @@ spec:
                     change: {type: integer, format: int32}
                     destroy: {type: integer, format: int32}
                     total: {type: integer, format: int32}
+                stateLocked: {type: boolean}
                 expiresAt:
                   type: string
                   format: date-time

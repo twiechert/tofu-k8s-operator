@@ -48,7 +48,7 @@ func updateReadyCondition(project *tofuv1alpha1.TofuProject) {
 		if project.Status.Phase == "DriftChecking" {
 			message = "Running drift detection"
 		}
-	case "Error", "DestroyFailed":
+	case "Error", "DestroyFailed", "Locked":
 		status = metav1.ConditionFalse
 		reason = "Error"
 		message = project.Status.Message
@@ -351,6 +351,25 @@ func parseTTL(s string) time.Duration {
 		return 0
 	}
 	return d
+}
+
+// parseJobTimeout parses a job timeout duration string.
+// Returns 30m on empty string, parse error, or non-positive duration.
+func parseJobTimeout(s string) time.Duration {
+	if s == "" {
+		return 30 * time.Minute
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 30 * time.Minute
+	}
+	return d
+}
+
+// isStateLockError checks if the logs contain an OpenTofu state lock error.
+func isStateLockError(logs string) bool {
+	return strings.Contains(logs, "Error acquiring the state lock") ||
+		strings.Contains(logs, "Error locking state")
 }
 
 // parseSyncInterval parses a duration string for the sync interval.

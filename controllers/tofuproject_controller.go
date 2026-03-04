@@ -29,6 +29,7 @@ const (
 	finalizerName            = "tofu.example.com/destroy"
 	approvedHashAnnotation   = "tofu.example.com/approved-hash"
 	approvedDeleteAnnotation = "tofu.example.com/approved-delete"
+	forceUnlockAnnotation    = "tofu.example.com/force-unlock"
 	maxPlanOutputBytes       = 32 * 1024
 	outputMarker             = "---TOFU-OUTPUTS---"
 )
@@ -156,6 +157,12 @@ func (r *TofuProjectReconciler) handleLifecycle(ctx context.Context, project *to
 		r.updateStatusWithCondition(ctx, project)
 	}
 
+	// Force-unlock check — handle the force-unlock annotation
+	if ann := project.GetAnnotations(); ann != nil && ann[forceUnlockAnnotation] == "true" {
+		result, err := r.handleForceUnlock(ctx, project)
+		return true, result, err
+	}
+
 	// Suspend check — pause reconciliation entirely
 	if project.Spec.Suspend {
 		if project.Status.Phase != "Suspended" {
@@ -179,6 +186,116 @@ func (r *TofuProjectReconciler) handleLifecycle(ctx context.Context, project *to
 	}
 
 	return false, ctrl.Result{}, nil
+}
+
+// handleForceUnlock manages the force-unlock annotation lifecycle.
+// It deletes active jobs, creates/monitors a force-unlock job, and cleans up on completion.
+func (r *TofuProjectReconciler) handleForceUnlock(ctx context.Context, project *tofuv1alpha1.TofuProject) (ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
+	log.Info("handling force-unlock for TofuProject", "name", project.Name)
+
+	// Delete any active jobs for this project (they'd fail anyway with a lock)
+	var jobList batchv1.JobList
+	if err := r.List(ctx, &jobList, client.InNamespace(project.Namespace), client.MatchingLabelsSelector{
+		Selector: labels.SelectorFromSet(map[string]string{
+			"tofu.example.com/project": project.Name,
+		}),
+	}); err != nil {
+		return ctrl.Result{}, err
+	}
+	for i := range jobList.Items {
+		j := &jobList.Items[i]
+		if j.Labels["tofu.example.com/job-type"] == "force-unlock" {
+			continue
+		}
+		if j.Status.Succeeded == 0 && j.Status.Failed == 0 {
+			log.Info("deleting active job before force-unlock", "job", j.Name)
+			_ = r.Delete(ctx, j, client.PropagationPolicy(metav1.DeletePropagationBackground))
+		}
+	}
+
+	// Resolve ConfigMap and image for the force-unlock job
+	cmName := fmt.Sprintf("%s-tf", project.Name)
+	var cm corev1.ConfigMap
+	if err := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: project.Namespace}, &cm); err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Info("ConfigMap not found for force-unlock, clearing lock state")
+			r.clearForceUnlockAnnotation(ctx, project)
+			project.Status.StateLocked = false
+			project.Status.Phase = ""
+			project.Status.Message = ""
+			r.updateStatusWithCondition(ctx, project)
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	image := project.Spec.Image
+	if image == "" {
+		image = "ghcr.io/opentofu/opentofu:latest"
+	}
+	saName := "tofu-runner"
+	if project.Spec.ServiceAccount != nil && project.Spec.ServiceAccount.Name != "" {
+		saName = project.Spec.ServiceAccount.Name
+	}
+
+	jobName := fmt.Sprintf("%s-force-unlock", project.Name)
+	var job batchv1.Job
+	if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: project.Namespace}, &job); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+		// Create the force-unlock job
+		newJob := buildForceUnlockJob(project, jobName, cmName, image, saName)
+		addEnvToJob(newJob, project)
+		if err := controllerutil.SetControllerReference(project, newJob, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.Create(ctx, newJob); err != nil {
+			return ctrl.Result{}, err
+		}
+		project.Status.Phase = "ForceUnlocking"
+		project.Status.LastJobName = jobName
+		project.Status.Message = "Running force-unlock"
+		r.updateStatusWithCondition(ctx, project)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// Check force-unlock job status
+	if job.Status.Succeeded > 0 {
+		log.Info("force-unlock succeeded", "name", project.Name)
+		_ = r.Delete(ctx, &job, client.PropagationPolicy(metav1.DeletePropagationBackground))
+		r.clearForceUnlockAnnotation(ctx, project)
+		project.Status.StateLocked = false
+		project.Status.Phase = ""
+		project.Status.Message = ""
+		r.updateStatusWithCondition(ctx, project)
+		return ctrl.Result{Requeue: true}, nil
+	}
+	if job.Status.Failed > 0 {
+		log.Info("force-unlock failed", "name", project.Name)
+		r.clearForceUnlockAnnotation(ctx, project)
+		project.Status.Phase = "Error"
+		project.Status.Message = "Force-unlock job failed"
+		r.updateStatusWithCondition(ctx, project)
+		return ctrl.Result{}, nil
+	}
+
+	// Still running
+	project.Status.Phase = "ForceUnlocking"
+	project.Status.LastJobName = jobName
+	r.updateStatusWithCondition(ctx, project)
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// clearForceUnlockAnnotation removes the force-unlock annotation from the project.
+func (r *TofuProjectReconciler) clearForceUnlockAnnotation(ctx context.Context, project *tofuv1alpha1.TofuProject) {
+	ann := project.GetAnnotations()
+	if ann != nil {
+		delete(ann, forceUnlockAnnotation)
+		project.SetAnnotations(ann)
+		_ = r.Update(ctx, project)
+	}
 }
 
 // prepareReconcile fetches the program, validates, resolves deps, computes hash,
@@ -468,6 +585,7 @@ func (r *TofuProjectReconciler) checkJobLock(ctx context.Context, project *tofuv
 
 // configureAndCreateJob builds a job, applies cache/env/volumes/resources/validation, sets owner ref, and creates it.
 func (r *TofuProjectReconciler) configureAndCreateJob(ctx context.Context, job *batchv1.Job, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, image string, cacheEnabled bool, cachePVCName string) error {
+	setJobTimeout(job, project)
 	if cacheEnabled {
 		addCacheToJob(job, cachePVCName)
 	}
@@ -541,6 +659,7 @@ func (r *TofuProjectReconciler) handleApplyJobResult(ctx context.Context, projec
 		project.Status.Message = ""
 		project.Status.RetryCount = 0
 		project.Status.DriftDetected = false
+		project.Status.StateLocked = false
 		if project.Spec.DriftDetection != nil && project.Spec.DriftDetection.Enabled {
 			now := metav1.Now()
 			project.Status.LastDriftCheckTime = &now
@@ -567,6 +686,16 @@ func (r *TofuProjectReconciler) handleApplyJobResult(ctx context.Context, projec
 		failLogs, logsErr := r.readJobLogs(ctx, job)
 		if logsErr != nil {
 			log.Error(logsErr, "failed to read failed job logs (non-fatal)")
+		}
+		if failLogs != "" && isStateLockError(failLogs) {
+			project.Status.StateLocked = true
+			project.Status.Phase = "Locked"
+			project.Status.LastJobName = jobName
+			project.Status.Message = "State is locked — use 'kubectl tofu force-unlock' to recover"
+			r.createRevisionFromCM(ctx, project, appliedHash, jobName, "failed", failLogs)
+			r.updateStatusWithCondition(ctx, project)
+			sendNotification(ctx, project, "apply:error")
+			return ctrl.Result{}, nil
 		}
 		project.Status.Phase = "Error"
 		project.Status.LastJobName = jobName
@@ -696,6 +825,15 @@ func (r *TofuProjectReconciler) handlePlanJobStatus(ctx context.Context, project
 		}
 		if len(output) > maxPlanOutputBytes {
 			output = output[len(output)-maxPlanOutputBytes:]
+		}
+		if isStateLockError(output) {
+			project.Status.StateLocked = true
+			project.Status.Phase = "Locked"
+			project.Status.LastPlanJobName = planJob.Name
+			project.Status.PlanOutput = output
+			project.Status.Message = "State is locked — use 'kubectl tofu force-unlock' to recover"
+			r.updateStatusWithCondition(ctx, project)
+			return ctrl.Result{}, nil
 		}
 		project.Status.Phase = "Error"
 		project.Status.LastPlanJobName = planJob.Name
@@ -829,6 +967,7 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		project.Status.Message = ""
 		project.Status.RetryCount = 0
 		project.Status.DriftDetected = false
+		project.Status.StateLocked = false
 		// Set drift check time so drift detection doesn't fire immediately after apply
 		if project.Spec.DriftDetection != nil && project.Spec.DriftDetection.Enabled {
 			now := metav1.Now()
@@ -864,6 +1003,16 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		failLogs, logsErr := r.readJobLogs(ctx, job)
 		if logsErr != nil {
 			log.Error(logsErr, "failed to read failed job logs (non-fatal)")
+		}
+		if failLogs != "" && isStateLockError(failLogs) {
+			project.Status.StateLocked = true
+			project.Status.Phase = "Locked"
+			project.Status.LastJobName = jobName
+			project.Status.Message = "State is locked — use 'kubectl tofu force-unlock' to recover"
+			r.createRevisionFromCM(ctx, project, appliedHash, jobName, "failed", failLogs)
+			r.updateStatusWithCondition(ctx, project)
+			sendNotification(ctx, project, "apply:error")
+			return ctrl.Result{}, nil
 		}
 		project.Status.Phase = "Error"
 		project.Status.LastJobName = jobName
@@ -1000,6 +1149,7 @@ func (r *TofuProjectReconciler) resolveDestroyContext(ctx context.Context, proje
 func (r *TofuProjectReconciler) buildAndCreateDestroyJob(ctx context.Context, project *tofuv1alpha1.TofuProject, cmName, image string, programPtr *tofuv1alpha1.TofuProgram, saName string) error {
 	jobName := fmt.Sprintf("%s-destroy", project.Name)
 	newJob := buildDestroyJob(project, jobName, cmName, image, programPtr, saName)
+	setJobTimeout(newJob, project)
 	cacheMode := r.cacheMode(project)
 	if cacheMode != "" {
 		pvcName, err := r.ensureCachePVC(ctx, project, cacheMode)
