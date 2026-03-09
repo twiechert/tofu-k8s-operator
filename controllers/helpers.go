@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -212,6 +213,57 @@ func (r *TofuProjectReconciler) captureOutputs(ctx context.Context, job *batchv1
 		return nil, fmt.Errorf("reading job logs: %w", err)
 	}
 	return parseOutputsFromLogs(logs)
+}
+
+// parseGitCommitSHA extracts the resolved git commit SHA from job logs.
+// The marker is on its own line, and the SHA is on the following line.
+func parseGitCommitSHA(logs string) string {
+	idx := strings.Index(logs, gitCommitSHAMarker)
+	if idx < 0 {
+		return ""
+	}
+	rest := logs[idx+len(gitCommitSHAMarker):]
+	// Skip to the next non-empty line
+	for _, line := range strings.Split(rest, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(line) >= 40 {
+			return line[:40]
+		}
+		return ""
+	}
+	return ""
+}
+
+// storeGitCommitSHA updates the -tf ConfigMap with the resolved commit SHA in the stored git source.
+func (r *TofuProjectReconciler) storeGitCommitSHA(ctx context.Context, project *tofuv1alpha1.TofuProject, sha string) {
+	if sha == "" {
+		return
+	}
+	log := ctrl.LoggerFrom(ctx)
+	cmName := fmt.Sprintf("%s-tf", project.Name)
+	var cm corev1.ConfigMap
+	if err := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: project.Namespace}, &cm); err != nil {
+		log.Error(err, "failed to fetch ConfigMap for git SHA update")
+		return
+	}
+	raw, ok := cm.Data[gitSourceCMKey]
+	if !ok {
+		return
+	}
+	var gs tofuv1alpha1.GitSource
+	if err := json.Unmarshal([]byte(raw), &gs); err != nil {
+		log.Error(err, "failed to unmarshal git source from ConfigMap")
+		return
+	}
+	gs.Ref = sha
+	updated, _ := json.Marshal(&gs)
+	cm.Data[gitSourceCMKey] = string(updated)
+	if err := r.Update(ctx, &cm); err != nil {
+		log.Error(err, "failed to update ConfigMap with git commit SHA")
+	}
 }
 
 // --- Cache management ---

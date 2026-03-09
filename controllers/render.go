@@ -43,14 +43,18 @@ func renderCommand(workspace string, autoApprove bool, gitMode bool, source *tof
 	if tofuValidate {
 		validate = "tofu validate\n"
 	}
+	gitSHAStep := ""
+	if gitMode {
+		gitSHAStep = "if [ -f /git-repo/.git-commit-sha ]; then echo '---TOFU-GIT-SHA---'; cat /git-repo/.git-commit-sha; fi\n"
+	}
 	return fmt.Sprintf(`set -euo pipefail
 %s
-%stofu version
+%s%stofu version
 tofu init -input=false
 %s%stofu apply -input=false%s
 echo '%s'
 tofu output -json
-`, copyStep, stripSteps, validate, ws, approve, outputMarker)
+`, copyStep, gitSHAStep, stripSteps, validate, ws, approve, outputMarker)
 }
 
 // renderPlanCommand generates the shell command for tofu plan.

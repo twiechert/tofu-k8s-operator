@@ -32,6 +32,8 @@ const (
 	forceUnlockAnnotation    = "tofu.example.com/force-unlock"
 	maxPlanOutputBytes       = 32 * 1024
 	outputMarker             = "---TOFU-OUTPUTS---"
+	gitCommitSHAMarker       = "---TOFU-GIT-SHA---"
+	gitSourceCMKey           = "git-source.json"
 )
 
 type TofuProjectReconciler struct {
@@ -484,6 +486,10 @@ func (r *TofuProjectReconciler) ensureTFConfigMap(ctx context.Context, project *
 		}
 		if !gitMode {
 			cm.Data["main.tf"] = program.Spec.ProgramHCL + "\n"
+			delete(cm.Data, gitSourceCMKey)
+		} else {
+			gsJSON, _ := json.Marshal(program.Spec.Source)
+			cm.Data[gitSourceCMKey] = string(gsJSON)
 		}
 		if len(program.Spec.Providers) > 0 {
 			cm.Data["providers.tf"] = renderProvidersTF(program.Spec.Providers)
@@ -651,6 +657,9 @@ func (r *TofuProjectReconciler) handleApplyJobResult(ctx context.Context, projec
 		var outputs map[string]string
 		if jobLogs != "" {
 			outputs, _ = parseOutputsFromLogs(jobLogs)
+			if sha := parseGitCommitSHA(jobLogs); sha != "" {
+				r.storeGitCommitSHA(ctx, project, sha)
+			}
 		}
 		project.Status.Phase = "Succeeded"
 		project.Status.LastAppliedHash = appliedHash
@@ -972,10 +981,17 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 	// Job exists — check its status
 	if job.Status.Succeeded > 0 {
 		applyTotal.WithLabelValues(project.Namespace, project.Name, "succeeded").Inc()
-		// Capture outputs from apply logs
-		outputs, err := r.captureOutputs(ctx, job)
-		if err != nil {
-			log.Error(err, "failed to capture outputs from apply job (non-fatal)")
+		// Capture outputs and git commit SHA from apply logs
+		applyLogs, logsErr := r.readJobLogs(ctx, job)
+		if logsErr != nil {
+			log.Error(logsErr, "failed to read apply job logs (non-fatal)")
+		}
+		var outputs map[string]string
+		if applyLogs != "" {
+			outputs, _ = parseOutputsFromLogs(applyLogs)
+			if sha := parseGitCommitSHA(applyLogs); sha != "" {
+				r.storeGitCommitSHA(ctx, project, sha)
+			}
 		}
 		// Preserve plan output for revision before clearing
 		revPlanOutput := project.Status.PlanOutput
@@ -1067,11 +1083,11 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 		return result, nil
 	}
 
-	cmName, image, programPtr, saName, result, err := r.resolveDestroyContext(ctx, project)
+	dctx, result, err := r.resolveDestroyContext(ctx, project)
 	if err != nil {
 		return result, err
 	}
-	if cmName == "" {
+	if dctx == nil {
 		// ConfigMap not found, finalizer removed
 		return result, nil
 	}
@@ -1082,7 +1098,7 @@ func (r *TofuProjectReconciler) reconcileDestroy(ctx context.Context, project *t
 		if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		if err := r.buildAndCreateDestroyJob(ctx, project, cmName, image, programPtr, saName); err != nil {
+		if err := r.buildAndCreateDestroyJob(ctx, project, dctx); err != nil {
 			return ctrl.Result{}, err
 		}
 		project.Status.Phase = "Destroying"
@@ -1141,9 +1157,18 @@ func (r *TofuProjectReconciler) checkDeleteProtection(ctx context.Context, proje
 	return true, ctrl.Result{}
 }
 
+// destroyContext holds all resolved context needed to build a destroy job.
+type destroyContext struct {
+	cmName    string
+	image     string
+	program   *tofuv1alpha1.TofuProgram
+	saName    string
+	gitSource *tofuv1alpha1.GitSource // from ConfigMap (pinned SHA), not live TofuProgram
+}
+
 // resolveDestroyContext resolves ConfigMap, program, image, and SA name for destruction.
 // Returns cmName="" if the ConfigMap was not found and the finalizer was removed.
-func (r *TofuProjectReconciler) resolveDestroyContext(ctx context.Context, project *tofuv1alpha1.TofuProject) (string, string, *tofuv1alpha1.TofuProgram, string, ctrl.Result, error) {
+func (r *TofuProjectReconciler) resolveDestroyContext(ctx context.Context, project *tofuv1alpha1.TofuProject) (*destroyContext, ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 	cmName := fmt.Sprintf("%s-tf", project.Name)
 	var cm corev1.ConfigMap
@@ -1151,11 +1176,22 @@ func (r *TofuProjectReconciler) resolveDestroyContext(ctx context.Context, proje
 		if apierrors.IsNotFound(err) {
 			log.Info("ConfigMap not found, cannot run destroy — removing finalizer", "configmap", cmName)
 			controllerutil.RemoveFinalizer(project, finalizerName)
-			return "", "", nil, "", ctrl.Result{}, r.Update(ctx, project)
+			return nil, ctrl.Result{}, r.Update(ctx, project)
 		}
-		return "", "", nil, "", ctrl.Result{}, err
+		return nil, ctrl.Result{}, err
 	}
 
+	// Restore git source from ConfigMap (contains pinned commit SHA after successful apply)
+	var storedSource *tofuv1alpha1.GitSource
+	if raw, ok := cm.Data[gitSourceCMKey]; ok {
+		var gs tofuv1alpha1.GitSource
+		if err := json.Unmarshal([]byte(raw), &gs); err == nil {
+			storedSource = &gs
+		}
+	}
+
+	// Still fetch the TofuProgram for credentials secret ref if the stored source
+	// doesn't have one (backwards compat) and for the program pointer used by buildDestroyJob
 	progNs := project.Spec.ProgramRef.Namespace
 	if progNs == "" {
 		progNs = project.Namespace
@@ -1164,7 +1200,7 @@ func (r *TofuProjectReconciler) resolveDestroyContext(ctx context.Context, proje
 	var programPtr *tofuv1alpha1.TofuProgram
 	if err := r.Get(ctx, types.NamespacedName{Name: project.Spec.ProgramRef.Name, Namespace: progNs}, &program); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return "", "", nil, "", ctrl.Result{}, err
+			return nil, ctrl.Result{}, err
 		}
 	} else {
 		programPtr = &program
@@ -1180,13 +1216,25 @@ func (r *TofuProjectReconciler) resolveDestroyContext(ctx context.Context, proje
 		saName = project.Spec.ServiceAccount.Name
 	}
 
-	return cmName, image, programPtr, saName, ctrl.Result{}, nil
+	return &destroyContext{
+		cmName:    cmName,
+		image:     image,
+		program:   programPtr,
+		saName:    saName,
+		gitSource: storedSource,
+	}, ctrl.Result{}, nil
 }
 
 // buildAndCreateDestroyJob creates the destroy job with cache, env, volumes, resources, and validation.
-func (r *TofuProjectReconciler) buildAndCreateDestroyJob(ctx context.Context, project *tofuv1alpha1.TofuProject, cmName, image string, programPtr *tofuv1alpha1.TofuProgram, saName string) error {
+func (r *TofuProjectReconciler) buildAndCreateDestroyJob(ctx context.Context, project *tofuv1alpha1.TofuProject, dctx *destroyContext) error {
 	jobName := fmt.Sprintf("%s-destroy", project.Name)
-	newJob := buildDestroyJob(project, jobName, cmName, image, programPtr, saName)
+	// Use stored git source from ConfigMap (pinned commit SHA) when available.
+	// Fall back to live TofuProgram source for backwards compatibility.
+	destroySource := dctx.gitSource
+	if destroySource == nil && dctx.program != nil && isGitSource(dctx.program) {
+		destroySource = dctx.program.Spec.Source
+	}
+	newJob := buildDestroyJobWithSource(project, jobName, dctx.cmName, dctx.image, destroySource, dctx.saName)
 	setJobTimeout(newJob, project)
 	cacheMode := r.cacheMode(project)
 	if cacheMode != "" {
@@ -1201,12 +1249,8 @@ func (r *TofuProjectReconciler) buildAndCreateDestroyJob(ctx context.Context, pr
 	if err := addResourcesToJob(newJob, project); err != nil {
 		return err
 	}
-	destroyGitMode := programPtr != nil && isGitSource(programPtr)
-	var destroySource *tofuv1alpha1.GitSource
-	if destroyGitMode {
-		destroySource = programPtr.Spec.Source
-	}
-	if err := addValidationToJob(newJob, project, image, destroyGitMode, destroySource); err != nil {
+	destroyGitMode := destroySource != nil
+	if err := addValidationToJob(newJob, project, dctx.image, destroyGitMode, destroySource); err != nil {
 		return err
 	}
 	return r.Create(ctx, newJob)

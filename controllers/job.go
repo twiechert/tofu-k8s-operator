@@ -293,6 +293,7 @@ elif [ -f /git-credentials/sshPrivateKey ]; then
   fi
 fi
 git clone --branch %s --depth 1 "$REPO_URL" /git-repo
+cd /git-repo && git rev-parse HEAD > /git-repo/.git-commit-sha
 `, source.URL, shellEscape(ref))
 
 	container := corev1.Container{
@@ -331,12 +332,17 @@ git clone --branch %s --depth 1 "$REPO_URL" /git-repo
 }
 
 func buildDestroyJob(project *tofuv1alpha1.TofuProject, jobName, cmName, image string, program *tofuv1alpha1.TofuProgram, saName string) *batchv1.Job {
-	backoff := int32(0)
-	gitMode := program != nil && isGitSource(program)
 	var source *tofuv1alpha1.GitSource
-	if gitMode {
+	if program != nil && isGitSource(program) {
 		source = program.Spec.Source
 	}
+	return buildDestroyJobWithSource(project, jobName, cmName, image, source, saName)
+}
+
+// buildDestroyJobWithSource creates a destroy Job using an explicit GitSource (which may contain a pinned commit SHA).
+func buildDestroyJobWithSource(project *tofuv1alpha1.TofuProject, jobName, cmName, image string, source *tofuv1alpha1.GitSource, saName string) *batchv1.Job {
+	backoff := int32(0)
+	gitMode := source != nil
 	validate := tofuValidateEnabled(project)
 	cmd := []string{"/bin/sh", "-c", renderDestroyCommand(project.Spec.Workspace, gitMode, source, project.Spec.IgnoreProviders, validate)}
 

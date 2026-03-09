@@ -271,6 +271,40 @@ func TestIsWithinApplyWindow_DefaultWindow(t *testing.T) {
 	}
 }
 
+func TestParseGitCommitSHA_Valid(t *testing.T) {
+	logs := `set -euo pipefail
+---TOFU-GIT-SHA---
+a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.`
+	sha := parseGitCommitSHA(logs)
+	if sha != "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2" {
+		t.Fatalf("expected valid SHA, got %q", sha)
+	}
+}
+
+func TestParseGitCommitSHA_NoMarker(t *testing.T) {
+	logs := "Apply complete! Resources: 1 added, 0 changed, 0 destroyed."
+	sha := parseGitCommitSHA(logs)
+	if sha != "" {
+		t.Fatalf("expected empty SHA when no marker, got %q", sha)
+	}
+}
+
+func TestParseGitCommitSHA_TooShort(t *testing.T) {
+	logs := "---TOFU-GIT-SHA---\nabc123\n"
+	sha := parseGitCommitSHA(logs)
+	if sha != "" {
+		t.Fatalf("expected empty SHA for short hash, got %q", sha)
+	}
+}
+
+func TestParseGitCommitSHA_Empty(t *testing.T) {
+	sha := parseGitCommitSHA("")
+	if sha != "" {
+		t.Fatalf("expected empty SHA for empty logs, got %q", sha)
+	}
+}
+
 func TestIsWithinApplyWindow_InvalidCron(t *testing.T) {
 	spec := &tofuv1alpha1.ApplyScheduleSpec{
 		Schedule: "not a cron expression",

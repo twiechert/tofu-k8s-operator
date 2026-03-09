@@ -337,6 +337,52 @@ func TestRenderCommandIncludesOutputMarker(t *testing.T) {
 	}
 }
 
+func TestRenderCommandGitModeIncludesGitSHAMarker(t *testing.T) {
+	src := &tofuv1alpha1.GitSource{URL: "https://github.com/example/repo.git", Path: "infra"}
+	cmd := renderCommand("", true, true, src, false, true)
+	if !strings.Contains(cmd, "---TOFU-GIT-SHA---") {
+		t.Fatal("apply command in git mode should include git SHA marker")
+	}
+}
+
+func TestRenderCommandInlineModeNoGitSHAMarker(t *testing.T) {
+	cmd := renderCommand("", true, false, nil, false, true)
+	if strings.Contains(cmd, "---TOFU-GIT-SHA---") {
+		t.Fatal("apply command in inline mode should NOT include git SHA marker")
+	}
+}
+
+func TestBuildDestroyJobWithSource_UsesPinnedSource(t *testing.T) {
+	project := fakeProject("test")
+	project.Name = "test"
+	project.Namespace = "default"
+	pinnedSHA := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	source := &tofuv1alpha1.GitSource{
+		URL:  "https://github.com/example/repo.git",
+		Ref:  pinnedSHA,
+		Path: "infra",
+	}
+	job := buildDestroyJobWithSource(&project, "test-destroy", "test-tf", "opentofu:latest", source, "tofu-runner")
+	// Verify the job has a git-clone init container
+	if len(job.Spec.Template.Spec.InitContainers) != 1 {
+		t.Fatalf("expected 1 init container (git-clone), got %d", len(job.Spec.Template.Spec.InitContainers))
+	}
+	initCmd := job.Spec.Template.Spec.InitContainers[0].Command[2]
+	if !strings.Contains(initCmd, pinnedSHA) {
+		t.Fatalf("expected git clone to use pinned SHA %s, got:\n%s", pinnedSHA, initCmd)
+	}
+}
+
+func TestBuildDestroyJobWithSource_NilSourceNoGitClone(t *testing.T) {
+	project := fakeProject("test")
+	project.Name = "test"
+	project.Namespace = "default"
+	job := buildDestroyJobWithSource(&project, "test-destroy", "test-tf", "opentofu:latest", nil, "tofu-runner")
+	if len(job.Spec.Template.Spec.InitContainers) != 0 {
+		t.Fatalf("expected 0 init containers for nil source, got %d", len(job.Spec.Template.Spec.InitContainers))
+	}
+}
+
 func TestRenderPlanCommandNoOutputMarker(t *testing.T) {
 	cmd := renderPlanCommand("", false, nil, false, true)
 	if strings.Contains(cmd, outputMarker) {
