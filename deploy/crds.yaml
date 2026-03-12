@@ -354,6 +354,36 @@ spec:
                 ttl:
                   type: string
                   description: "How long the project lives after creation before auto-deletion (e.g. '24h', '168h'). Empty = no TTL."
+                approval:
+                  type: object
+                  description: "Configures the approval mechanism for plan-approve flow."
+                  properties:
+                    mode:
+                      type: string
+                      description: "Approval mode: 'annotation' (default) or 'githubPR'."
+                    github:
+                      type: object
+                      description: "GitHub PR approval configuration. Required when mode is 'githubPR'."
+                      required: ["tokenSecretRef", "repo"]
+                      properties:
+                        tokenSecretRef:
+                          type: object
+                          required: ["name", "key"]
+                          properties:
+                            name: {type: string}
+                            key: {type: string}
+                        repo:
+                          type: string
+                          description: "GitHub repository in 'owner/repo' format."
+                        apiURL:
+                          type: string
+                          description: "GitHub API base URL. Default: https://api.github.com. Set for GitHub Enterprise."
+                        commitDiff:
+                          type: boolean
+                          description: "If true, commit the plan output as a file in the PR branch."
+                        diffPath:
+                          type: string
+                          description: "Directory prefix for committed plan files. Default: 'plans/'."
             status:
               type: object
               properties:
@@ -385,6 +415,12 @@ spec:
                     destroy: {type: integer, format: int32}
                     total: {type: integer, format: int32}
                 stateLocked: {type: boolean}
+                pendingPRNumber:
+                  type: integer
+                  description: "GitHub PR number awaiting merge for approval."
+                pendingPRURL:
+                  type: string
+                  description: "URL of the pending GitHub PR."
                 expiresAt:
                   type: string
                   format: date-time

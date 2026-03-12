@@ -758,6 +758,25 @@ func (r *TofuProjectReconciler) reconcilePlanApprove(ctx context.Context, projec
 		return r.handleApprovedPlan(ctx, project, program, appliedHash, cmName, image, syncInterval, cacheEnabled, cachePVCName, saName)
 	}
 
+	// GitHub PR mode: check if the pending PR has been merged or closed
+	if isGitHubPRMode(project) && project.Status.PendingPRNumber > 0 && project.Status.PendingPlanHash == appliedHash {
+		merged, err := r.checkPRMergeStatus(ctx, project, appliedHash)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if merged {
+			// Annotation was set by checkPRMergeStatus, requeue to pick it up
+			return ctrl.Result{Requeue: true}, nil
+		}
+		// PR rejected (closed without merge) — PlanRejected phase was set,
+		// fall through to re-create plan on next reconcile
+		if project.Status.Phase == "PlanRejected" {
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+		// Still open — poll again
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
 	if project.Status.Phase == "WaitingApproval" && project.Status.PendingPlanHash == appliedHash {
 		return ctrl.Result{}, nil
 	}
@@ -781,6 +800,12 @@ func (r *TofuProjectReconciler) invalidateStalePlan(ctx context.Context, project
 	}
 	log := ctrl.LoggerFrom(ctx)
 	log.Info("spec changed, invalidating stale plan", "oldHash", project.Status.PendingPlanHash, "newHash", appliedHash)
+	// Close stale GitHub PR if one is pending
+	if isGitHubPRMode(project) && project.Status.PendingPRNumber > 0 {
+		r.closeStaleApprovalPR(ctx, project, appliedHash)
+		project.Status.PendingPRNumber = 0
+		project.Status.PendingPRURL = ""
+	}
 	project.Status.PendingPlanHash = ""
 	project.Status.PlanOutput = ""
 	project.Status.PlanSummary = ""
@@ -904,6 +929,11 @@ func (r *TofuProjectReconciler) handlePlanSuccess(ctx context.Context, project *
 		return result, err
 	}
 
+	// GitHub PR mode: create a PR instead of waiting for annotation
+	if isGitHubPRMode(project) {
+		return r.createApprovalPR(ctx, project, output, appliedHash)
+	}
+
 	project.Status.Phase = "WaitingApproval"
 	project.Status.Message = "Plan complete. Approve to apply."
 	r.updateStatusWithCondition(ctx, project)
@@ -1013,6 +1043,8 @@ func (r *TofuProjectReconciler) createApplyAfterApproval(ctx context.Context, pr
 		project.Status.PlanOutput = ""
 		project.Status.PlanSummary = ""
 		project.Status.BlastRadius = nil
+		project.Status.PendingPRNumber = 0
+		project.Status.PendingPRURL = ""
 		if outputs != nil {
 			project.Status.Outputs = outputs
 		}

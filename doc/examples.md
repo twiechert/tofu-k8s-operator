@@ -54,3 +54,37 @@ spec:
 **Note:**
 - You must provide AWS credentials (e.g., via a Kubernetes Secret and projected environment variables) for the operator Job to authenticate with AWS.
 - The bucket name must be globally unique.
+
+## GitHub PR-Based Approval
+
+Use GitHub Pull Requests to approve infrastructure plans. See the [plan-approve doc](plan-approve.md#github-pr-based-approval) for details.
+
+```yaml
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: hello-github-pr
+  namespace: default
+spec:
+  programRef:
+    name: hello
+  params:
+    environment: "staging"
+  backend:
+    secretSuffix: hello-github-pr
+    namespace: default
+  autoApprove: false
+  approval:
+    mode: githubPR
+    github:
+      tokenSecretRef:
+        name: gh-token
+        key: token
+      repo: "org/infra-plans"
+      commitDiff: true
+      diffPath: "plans/"
+```
+
+**Prerequisites:**
+- Create a GitHub token Secret: `kubectl create secret generic gh-token --from-literal=token=ghp_xxx`
+- The target repo must exist

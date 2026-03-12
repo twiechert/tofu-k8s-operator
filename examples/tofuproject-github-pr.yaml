@@ -1,0 +1,25 @@
+apiVersion: tofu.example.com/v1alpha1
+kind: TofuProject
+metadata:
+  name: hello-github-pr
+  namespace: default
+spec:
+  programRef:
+    name: hello
+  params:
+    environment: "staging"
+  backend:
+    secretSuffix: hello-github-pr
+    namespace: default
+  autoApprove: false
+  approval:
+    mode: githubPR
+    github:
+      tokenSecretRef:
+        name: gh-token
+        key: token
+      repo: "org/infra-plans"
+      # apiURL: "https://github.example.com/api/v3"  # optional: for GitHub Enterprise
+      commitDiff: true
+      diffPath: "plans/"
+  syncInterval: "10m"
