@@ -29,7 +29,7 @@ func TestNewGitHubClient(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, err := NewGitHubClient("tok", tt.ownerRepo)
+			c, err := NewGitHubClient("tok", tt.ownerRepo, "")
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("NewGitHubClient(%q) error = %v, wantErr %v", tt.ownerRepo, err, tt.wantErr)
 			}
@@ -37,6 +37,29 @@ func TestNewGitHubClient(t *testing.T) {
 				if c.Owner != tt.wantOwner || c.Repo != tt.wantRepo {
 					t.Fatalf("got owner=%q repo=%q, want %q/%q", c.Owner, c.Repo, tt.wantOwner, tt.wantRepo)
 				}
+			}
+		})
+	}
+}
+
+func TestNewGitHubClientAPIURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		apiURL  string
+		wantURL string
+	}{
+		{"default", "", "https://api.github.com"},
+		{"custom", "https://github.example.com/api/v3", "https://github.example.com/api/v3"},
+		{"trailing slash", "https://ghe.corp.com/api/v3/", "https://ghe.corp.com/api/v3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := NewGitHubClient("tok", "o/r", tt.apiURL)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if c.BaseURL != tt.wantURL {
+				t.Fatalf("got BaseURL=%q, want %q", c.BaseURL, tt.wantURL)
 			}
 		})
 	}

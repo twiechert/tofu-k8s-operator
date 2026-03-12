@@ -152,6 +152,9 @@ type GitHubApprovalSpec struct {
 	TokenSecretRef KeyRef `json:"tokenSecretRef"`
 	// repo is the GitHub repository in "owner/repo" format where PRs are created.
 	Repo string `json:"repo"`
+	// apiURL overrides the GitHub API base URL. Default: "https://api.github.com".
+	// Use this for GitHub Enterprise (e.g. "https://github.example.com/api/v3").
+	APIURL string `json:"apiURL,omitempty"`
 	// commitDiff, if true, commits the plan output file into the PR branch.
 	CommitDiff bool `json:"commitDiff,omitempty"`
 	// diffPath is the directory prefix in the repo for committed plan files. Default: "plans/"

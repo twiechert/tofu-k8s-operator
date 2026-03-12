@@ -19,6 +19,7 @@ spec:
         name: gh-token
         key: token
       repo: "org/infra-plans"
+      # apiURL: "https://github.example.com/api/v3"  # optional: for GitHub Enterprise
       commitDiff: true
       diffPath: "plans/"
   syncInterval: "10m"

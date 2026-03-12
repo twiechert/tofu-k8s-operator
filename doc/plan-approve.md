@@ -34,6 +34,7 @@ spec:
         name: gh-token       # Secret containing a GitHub token with repo scope
         key: token
       repo: "org/infra-plans" # GitHub repo where PRs are created
+      apiURL: ""               # optional: GitHub API URL (default: https://api.github.com, set for GHE)
       commitDiff: true         # commit plan output as a file in the PR
       diffPath: "plans/"       # directory for committed plan files (default: "plans/")
 ```

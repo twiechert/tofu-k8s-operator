@@ -28,16 +28,21 @@ type GitHubClient struct {
 }
 
 // NewGitHubClient parses "owner/repo" and returns a configured client.
-func NewGitHubClient(token, ownerRepo string) (*GitHubClient, error) {
+// apiURL overrides the default GitHub API base URL (pass "" for default).
+func NewGitHubClient(token, ownerRepo, apiURL string) (*GitHubClient, error) {
 	parts := strings.SplitN(ownerRepo, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return nil, fmt.Errorf("invalid repo format %q, expected owner/repo", ownerRepo)
+	}
+	baseURL := "https://api.github.com"
+	if apiURL != "" {
+		baseURL = strings.TrimRight(apiURL, "/")
 	}
 	return &GitHubClient{
 		Token:      token,
 		Owner:      parts[0],
 		Repo:       parts[1],
-		BaseURL:    "https://api.github.com",
+		BaseURL:    baseURL,
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
@@ -249,7 +254,7 @@ func (r *TofuProjectReconciler) newGitHubClientForProject(ctx context.Context, p
 	if err != nil {
 		return nil, err
 	}
-	return NewGitHubClient(token, gh.Repo)
+	return NewGitHubClient(token, gh.Repo, gh.APIURL)
 }
 
 // isGitHubPRMode returns true if the project uses GitHub PR-based approval.
