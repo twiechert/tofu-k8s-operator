@@ -138,6 +138,26 @@ type ApplyScheduleSpec struct {
 	Window string `json:"window,omitempty"`
 }
 
+// ApprovalSpec configures the approval mechanism for plan-approve flow.
+type ApprovalSpec struct {
+	// mode selects the approval mechanism: "annotation" (default) or "githubPR".
+	Mode string `json:"mode,omitempty"`
+	// github configures the GitHub PR approval flow. Required when mode is "githubPR".
+	GitHub *GitHubApprovalSpec `json:"github,omitempty"`
+}
+
+// GitHubApprovalSpec configures the GitHub PR-based approval flow.
+type GitHubApprovalSpec struct {
+	// tokenSecretRef references a Secret containing the GitHub API token.
+	TokenSecretRef KeyRef `json:"tokenSecretRef"`
+	// repo is the GitHub repository in "owner/repo" format where PRs are created.
+	Repo string `json:"repo"`
+	// commitDiff, if true, commits the plan output file into the PR branch.
+	CommitDiff bool `json:"commitDiff,omitempty"`
+	// diffPath is the directory prefix in the repo for committed plan files. Default: "plans/"
+	DiffPath string `json:"diffPath,omitempty"`
+}
+
 type TofuProjectSpec struct {
 	ProgramRef ObjectRef `json:"programRef"`
 
@@ -255,6 +275,10 @@ type TofuProjectSpec struct {
 	// ttl specifies how long the project lives after creation before auto-deletion.
 	// Uses Go duration format (e.g. "24h", "168h"). Empty = no TTL.
 	TTL string `json:"ttl,omitempty"`
+
+	// approval configures the approval mechanism for plan-approve flow.
+	// When mode is "githubPR", the operator creates a GitHub PR for approval instead of using annotations.
+	Approval *ApprovalSpec `json:"approval,omitempty"`
 }
 
 type TofuProjectStatus struct {
@@ -279,6 +303,10 @@ type TofuProjectStatus struct {
 	StateLocked bool `json:"stateLocked,omitempty"`
 	// ExpiresAt is when this project will be auto-deleted due to TTL.
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+	// PendingPRNumber is the GitHub PR number awaiting merge for approval.
+	PendingPRNumber int `json:"pendingPRNumber,omitempty"`
+	// PendingPRURL is the URL of the pending GitHub PR.
+	PendingPRURL string `json:"pendingPRURL,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -361,6 +389,14 @@ func deepCopySpecPointers(in, out *TofuProjectSpec) {
 	if in.ApplySchedule != nil {
 		asCopy := *in.ApplySchedule
 		out.ApplySchedule = &asCopy
+	}
+	if in.Approval != nil {
+		apCopy := *in.Approval
+		if in.Approval.GitHub != nil {
+			ghCopy := *in.Approval.GitHub
+			apCopy.GitHub = &ghCopy
+		}
+		out.Approval = &apCopy
 	}
 }
 

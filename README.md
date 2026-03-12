@@ -44,7 +44,7 @@ TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
 - Drift-safe: new Job created when inputs change (including ConfigMap/Secret watches)
 - [Cross-project output dependencies](doc/dependencies.md)
 - [Provider plugin cache](doc/provider-cache.md) via PVC
-- [Plan-then-approve](doc/plan-approve.md) workflow
+- [Plan-then-approve](doc/plan-approve.md) workflow — via kubectl annotation or [GitHub PR approval](doc/plan-approve.md#github-pr-based-approval)
 - [Delete protection](doc/delete-protection.md) — prevent accidental infrastructure destruction
 - Configurable service account — custom SA or annotations (IRSA/workload identity)
 - [kubectl plugin](doc/kubectl-plugin.md) — `kubectl tofu plan|approve|delete|suspend|resume|diff`
@@ -202,7 +202,7 @@ spec:
 | Topic | Description |
 |-------|-------------|
 | [Git Sources](doc/git-sources.md) | Using git repositories instead of inline HCL, private repo auth |
-| [Plan-Then-Approve](doc/plan-approve.md) | Review `tofu plan` output before applying |
+| [Plan-Then-Approve](doc/plan-approve.md) | Review `tofu plan` output before applying — annotation or GitHub PR approval |
 | [External Params](doc/external-params.md) | Import params from ConfigMaps/Secrets via `valuesFrom`, `paramFrom`, and `paramBindings` |
 | [Cross-Project Dependencies](doc/dependencies.md) | Consume outputs from upstream projects as input params |
 | [Provider Plugin Cache](doc/provider-cache.md) | Cache providers via PVC to speed up `tofu init` |
