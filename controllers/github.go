@@ -352,7 +352,7 @@ func (r *TofuProjectReconciler) createApprovalPR(ctx context.Context, project *t
 	prBody.WriteString(output)
 	prBody.WriteString("\n```\n</details>\n")
 
-	title := fmt.Sprintf("[tofu-operator] Plan for %s/%s (%s)", project.Namespace, project.Name, appliedHash[:8])
+	title := fmt.Sprintf("chore: tofu plan for %s/%s (%s)", project.Namespace, project.Name, appliedHash[:8])
 	prNumber, prURL, err := ghClient.CreatePR(ctx, title, prBody.String(), branch, defaultBranch)
 	if err != nil {
 		log.Error(err, "failed to create PR")
