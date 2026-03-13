@@ -83,8 +83,11 @@ func renderPlanCommand(workspace string, gitMode bool, source *tofuv1alpha1.GitS
 %s
 %stofu version
 tofu init -input=false
-%s%stofu plan -input=false -no-color
-`, copyStep, stripSteps, validate, ws)
+%s%stofu plan -input=false -no-color -out=tfplan
+tofu show -no-color tfplan
+echo '%s'
+tofu show -json tfplan
+`, copyStep, stripSteps, validate, ws, planJSONMarker)
 }
 
 func renderDestroyCommand(workspace string, gitMode bool, source *tofuv1alpha1.GitSource, ignoreProviders bool, tofuValidate bool) string {

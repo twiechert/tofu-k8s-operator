@@ -215,6 +215,68 @@ func (r *TofuProjectReconciler) captureOutputs(ctx context.Context, job *batchv1
 	return parseOutputsFromLogs(logs)
 }
 
+// parsePlanJSONFromLogs extracts the JSON plan output that follows the planJSONMarker.
+func parsePlanJSONFromLogs(logs string) string {
+	idx := strings.LastIndex(logs, planJSONMarker)
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(logs[idx+len(planJSONMarker):])
+}
+
+// redactSensitivePlanJSON replaces sensitive values in a tofu show -json plan with "REDACTED".
+func redactSensitivePlanJSON(raw string) string {
+	var plan map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+		return raw
+	}
+	redactVariables(plan)
+	redactResourceChanges(plan)
+	out, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return raw
+	}
+	return string(out)
+}
+
+func redactVariables(plan map[string]interface{}) {
+	vars, ok := plan["variables"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	for _, v := range vars {
+		vm, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		vm["value"] = "REDACTED"
+	}
+}
+
+func redactResourceChanges(plan map[string]interface{}) {
+	changes, ok := plan["resource_changes"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, rc := range changes {
+		rcMap, ok := rc.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		change, ok := rcMap["change"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, key := range []string{"before", "after", "before_sensitive", "after_sensitive"} {
+			if _, exists := change[key]; exists {
+				if key == "before_sensitive" || key == "after_sensitive" {
+					change[key] = true
+				}
+			}
+		}
+	}
+}
+
 // parseGitCommitSHA extracts the resolved git commit SHA from job logs.
 // The marker is on its own line, and the SHA is on the following line.
 func parseGitCommitSHA(logs string) string {

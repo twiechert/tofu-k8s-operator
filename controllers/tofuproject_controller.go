@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -32,6 +33,7 @@ const (
 	forceUnlockAnnotation    = "tofu.example.com/force-unlock"
 	maxPlanOutputBytes       = 32 * 1024
 	outputMarker             = "---TOFU-OUTPUTS---"
+	planJSONMarker           = "---TOFU-PLAN-JSON---"
 	gitCommitSHAMarker       = "---TOFU-GIT-SHA---"
 	gitSourceCMKey           = "git-source.json"
 )
@@ -913,13 +915,19 @@ func (r *TofuProjectReconciler) handlePlanSuccess(ctx context.Context, project *
 		output = output[len(output)-maxPlanOutputBytes:]
 	}
 
-	planSummary := extractPlanSummary(output)
+	// Strip the JSON plan portion from human-readable output
+	textOutput := output
+	if idx := strings.LastIndex(output, planJSONMarker); idx >= 0 {
+		textOutput = strings.TrimSpace(output[:idx])
+	}
+
+	planSummary := extractPlanSummary(textOutput)
 	blastRadius := parsePlanCounts(planSummary)
 
 	planTotal.WithLabelValues(project.Namespace, project.Name, "succeeded").Inc()
 
 	project.Status.PendingPlanHash = appliedHash
-	project.Status.PlanOutput = output
+	project.Status.PlanOutput = textOutput
 	project.Status.PlanSummary = planSummary
 	project.Status.BlastRadius = blastRadius
 	project.Status.LastPlanJobName = planJob.Name
@@ -931,7 +939,8 @@ func (r *TofuProjectReconciler) handlePlanSuccess(ctx context.Context, project *
 
 	// GitHub PR mode: create a PR instead of waiting for annotation
 	if isGitHubPRMode(project) {
-		return r.createApprovalPR(ctx, project, output, appliedHash)
+		planJSON := parsePlanJSONFromLogs(output)
+		return r.createApprovalPR(ctx, project, output, planJSON, appliedHash)
 	}
 
 	project.Status.Phase = "WaitingApproval"

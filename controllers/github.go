@@ -268,7 +268,7 @@ func prBranchName(project *tofuv1alpha1.TofuProject, hash string) string {
 }
 
 // createApprovalPR creates a GitHub PR with the plan output for approval.
-func (r *TofuProjectReconciler) createApprovalPR(ctx context.Context, project *tofuv1alpha1.TofuProject, planOutput, appliedHash string) (ctrl.Result, error) {
+func (r *TofuProjectReconciler) createApprovalPR(ctx context.Context, project *tofuv1alpha1.TofuProject, planOutput, planJSON, appliedHash string) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
 	ghClient, err := r.newGitHubClientForProject(ctx, project)
@@ -317,10 +317,17 @@ func (r *TofuProjectReconciler) createApprovalPR(ctx context.Context, project *t
 		if !strings.HasSuffix(diffPath, "/") {
 			diffPath += "/"
 		}
-		filePath := fmt.Sprintf("%s%s/%s/%s.txt", diffPath, project.Namespace, project.Name, appliedHash[:8])
-		commitMsg := fmt.Sprintf("tofu plan for %s/%s (%s)", project.Namespace, project.Name, appliedHash[:8])
-		if err := ghClient.CreateOrUpdateFile(ctx, filePath, planOutput, commitMsg, branch); err != nil {
-			log.Error(err, "failed to commit plan diff (non-fatal)")
+		// Commit the JSON plan file with sensitive values redacted; fall back to text output
+		planContent := planOutput
+		fileExt := "txt"
+		if planJSON != "" {
+			planContent = redactSensitivePlanJSON(planJSON)
+			fileExt = "json"
+		}
+		filePath := fmt.Sprintf("%s%s/%s/%s.%s", diffPath, project.Namespace, project.Name, appliedHash[:8], fileExt)
+		commitMsg := fmt.Sprintf("chore: add tofu plan for %s/%s (%s)", project.Namespace, project.Name, appliedHash[:8])
+		if err := ghClient.CreateOrUpdateFile(ctx, filePath, planContent, commitMsg, branch); err != nil {
+			log.Error(err, "failed to commit plan file (non-fatal)")
 		}
 	}
 
