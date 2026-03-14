@@ -85,18 +85,3 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.changelog.outputs.content }}
-
-      - name: Update Chart.yaml version on main
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git checkout main
-          sed -i "s/^version:.*/version: ${VERSION}/" charts/tofu-k8s-operator/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/tofu-k8s-operator/Chart.yaml
-          git add charts/tofu-k8s-operator/Chart.yaml
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: update Chart.yaml to ${VERSION} [skip ci]"
-            git push origin main
-          fi
