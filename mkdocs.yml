@@ -38,25 +38,28 @@ nav:
   - Getting Started:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
-  - Features:
+  - Configuration:
       - Git Sources: features/git-sources.md
-      - Plan & Approve: features/plan-approve.md
       - External Params: features/external-params.md
       - Cross-Project Dependencies: features/dependencies.md
-      - Provider Plugin Cache: features/provider-cache.md
-      - Delete Protection: features/delete-protection.md
       - Environment Variables: features/env-vars.md
       - Extra Volumes: features/extra-volumes.md
       - Resource Limits: features/resource-limits.md
-      - Retry Policy: features/retry-policy.md
-      - Drift Detection: features/drift-detection.md
-      - Webhook Notifications: features/webhooks.md
-      - Validation: features/validation.md
       - Ignore Providers: features/ignore-providers.md
-      - Blast Radius: features/blast-radius.md
-      - Revision History: features/revisions.md
+  - Workflows:
+      - Plan & Approve: features/plan-approve.md
       - Scheduled Apply: features/scheduled-apply.md
+      - Drift Detection: features/drift-detection.md
+      - Revision History: features/revisions.md
+      - Delete Protection: features/delete-protection.md
       - TTL Auto-Deletion: features/ttl.md
+  - Safety & Observability:
+      - Validation: features/validation.md
+      - Blast Radius: features/blast-radius.md
+      - Webhook Notifications: features/webhooks.md
+  - Performance:
+      - Provider & Module Cache: features/provider-cache.md
+      - Retry Policy: features/retry-policy.md
   - Operations:
       - kubectl Plugin: operations/kubectl-plugin.md
       - Examples: operations/examples.md

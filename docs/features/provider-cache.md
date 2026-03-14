@@ -1,6 +1,6 @@
-# Provider Plugin Cache
+# Provider & Module Cache
 
-Configurable caching of OpenTofu provider plugins via PVC, so `tofu init` doesn't re-download providers on every Job.
+Configurable caching of OpenTofu provider plugins and modules via PVC, so `tofu init` doesn't re-download them on every Job.
 
 ```yaml
 spec:
@@ -8,6 +8,7 @@ spec:
     mode: shared          # "shared" or "dedicated"
     size: "2Gi"           # default: "1Gi"
     storageClass: "fast"  # optional
+    modules: true         # also cache downloaded modules (default: false)
 ```
 
 ## Modes
@@ -19,6 +20,18 @@ spec:
 
 When no `cache` is specified, behaviour is unchanged (no PVC, no caching).
 
-The cache PVC is mounted at `/plugin-cache` and the `TF_PLUGIN_CACHE_DIR` environment variable is set automatically.
+## Provider Cache
 
-See [`examples/tofuproject-cached.yaml`](../examples/tofuproject-cached.yaml) for a complete example.
+The cache PVC is mounted at `/plugin-cache` and the `TF_PLUGIN_CACHE_DIR` environment variable is set automatically. Providers are stored under the `providers` subPath on the PVC.
+
+## Module Cache
+
+When `modules: true` is set, downloaded Terraform/OpenTofu modules are cached across jobs using the `modules` subPath on the same PVC. This is particularly useful for projects that reference many remote modules, avoiding re-downloads on every plan/apply cycle.
+
+Both provider and module caches share the same PVC, organized by subPath:
+
+```
+PVC
+├── providers/    # TF_PLUGIN_CACHE_DIR
+└── modules/      # .terraform/modules
+```
