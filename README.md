@@ -73,7 +73,7 @@ TofuProgram (HCL or git repo)  +  TofuProject (params, settings)
 
 Helm (recommended):
 ```bash
-helm install tofu-k8s-operator oci://ghcr.io/twiechert/tofu-k8s-operator \
+helm install tofu-k8s-operator oci://ghcr.io/twiechert/charts/tofu-k8s-operator \
   --version 0.8.2 \
   --namespace tofu-system \
   --create-namespace
