@@ -187,10 +187,7 @@ func (r *TofuProjectReconciler) reconcilePinned(ctx context.Context, project *to
 		return lockResult, nil
 	}
 
-	image := project.Spec.Image
-	if image == "" {
-		image = "ghcr.io/opentofu/opentofu:latest"
-	}
+	image := project.Spec.ResolveImage()
 
 	jobName := fmt.Sprintf("%s-apply-%s", project.Name, pinnedHash[:8])
 	job := &batchv1.Job{}

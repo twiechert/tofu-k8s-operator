@@ -77,10 +77,7 @@ func recordPhase(project *tofuv1alpha1.TofuProject) {
 
 // recordInfo emits the info metric with static labels.
 func recordInfo(project *tofuv1alpha1.TofuProject) {
-	image := project.Spec.Image
-	if image == "" {
-		image = "ghcr.io/opentofu/opentofu:latest"
-	}
+	image := project.Spec.ResolveImage()
 	autoApprove := "false"
 	if project.Spec.AutoApprove {
 		autoApprove = "true"

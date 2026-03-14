@@ -183,6 +183,10 @@ type TofuProjectSpec struct {
 	// container image running `tofu` (default: ghcr.io/opentofu/opentofu:latest)
 	Image string `json:"image,omitempty"`
 
+	// tofuVersion pins the OpenTofu binary version (e.g. "1.8.2").
+	// Sets the image tag on the default image. Ignored when image is set explicitly.
+	TofuVersion string `json:"tofuVersion,omitempty"`
+
 	// serviceAccount configures the ServiceAccount used by tofu Jobs
 	ServiceAccount *ServiceAccountSpec `json:"serviceAccount,omitempty"`
 
@@ -327,6 +331,19 @@ type TofuProjectList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []TofuProject `json:"items"`
+}
+
+// ResolveImage returns the container image for tofu Jobs.
+// Priority: spec.image > spec.tofuVersion > default (latest).
+func (s *TofuProjectSpec) ResolveImage() string {
+	if s.Image != "" {
+		return s.Image
+	}
+	tag := "latest"
+	if s.TofuVersion != "" {
+		tag = s.TofuVersion
+	}
+	return "ghcr.io/opentofu/opentofu:" + tag
 }
 
 func init() {

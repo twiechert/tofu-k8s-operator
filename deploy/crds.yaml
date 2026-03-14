@@ -138,6 +138,7 @@ spec:
                         description: "Name of a Secret to import all keys from"
                 workspace: {type: string}
                 image: {type: string}
+                tofuVersion: {type: string}
                 autoApprove: {type: boolean}
                 autoApproveMaxBlastRadius:
                   type: integer

@@ -234,10 +234,7 @@ func (r *TofuProjectReconciler) handleForceUnlock(ctx context.Context, project *
 		return ctrl.Result{}, err
 	}
 
-	image := project.Spec.Image
-	if image == "" {
-		image = "ghcr.io/opentofu/opentofu:latest"
-	}
+	image := project.Spec.ResolveImage()
 	saName := "tofu-runner"
 	if project.Spec.ServiceAccount != nil && project.Spec.ServiceAccount.Name != "" {
 		saName = project.Spec.ServiceAccount.Name
@@ -324,10 +321,7 @@ func (r *TofuProjectReconciler) prepareReconcile(ctx context.Context, project *t
 		return nil, ctrl.Result{}, err
 	}
 
-	image := project.Spec.Image
-	if image == "" {
-		image = "ghcr.io/opentofu/opentofu:latest"
-	}
+	image := project.Spec.ResolveImage()
 
 	effectiveParams, depHashStr, depResult, depErr := r.resolveDependencies(ctx, project)
 	if depErr != nil {
@@ -1247,10 +1241,7 @@ func (r *TofuProjectReconciler) resolveDestroyContext(ctx context.Context, proje
 		programPtr = &program
 	}
 
-	image := project.Spec.Image
-	if image == "" {
-		image = "ghcr.io/opentofu/opentofu:latest"
-	}
+	image := project.Spec.ResolveImage()
 
 	saName := "tofu-runner"
 	if project.Spec.ServiceAccount != nil && project.Spec.ServiceAccount.Name != "" {
