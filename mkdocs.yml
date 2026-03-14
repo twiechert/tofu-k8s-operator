@@ -1,0 +1,62 @@
+site_name: tofu-k8s-operator
+site_description: A Kubernetes operator for declarative OpenTofu/Terraform execution
+site_url: https://tofu-k8s-operator.readthedocs.io
+repo_url: https://github.com/twiechert/tofu-k8s-operator
+repo_name: twiechert/tofu-k8s-operator
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+  - Features:
+      - Git Sources: features/git-sources.md
+      - Plan & Approve: features/plan-approve.md
+      - External Params: features/external-params.md
+      - Cross-Project Dependencies: features/dependencies.md
+      - Provider Plugin Cache: features/provider-cache.md
+      - Delete Protection: features/delete-protection.md
+      - Environment Variables: features/env-vars.md
+      - Extra Volumes: features/extra-volumes.md
+      - Resource Limits: features/resource-limits.md
+      - Retry Policy: features/retry-policy.md
+      - Drift Detection: features/drift-detection.md
+      - Webhook Notifications: features/webhooks.md
+      - Validation: features/validation.md
+      - Ignore Providers: features/ignore-providers.md
+      - Blast Radius: features/blast-radius.md
+      - Revision History: features/revisions.md
+      - Scheduled Apply: features/scheduled-apply.md
+      - TTL Auto-Deletion: features/ttl.md
+  - Operations:
+      - kubectl Plugin: operations/kubectl-plugin.md
+      - Examples: operations/examples.md

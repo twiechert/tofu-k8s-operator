@@ -34,3 +34,6 @@ coverage.out
 # Ignore local env files
 .env
 .env.*
+
+# MkDocs build output
+site/
