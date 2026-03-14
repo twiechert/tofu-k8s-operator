@@ -589,7 +589,7 @@ func (r *TofuProjectReconciler) checkJobLock(ctx context.Context, project *tofuv
 func (r *TofuProjectReconciler) configureAndCreateJob(ctx context.Context, job *batchv1.Job, project *tofuv1alpha1.TofuProject, program *tofuv1alpha1.TofuProgram, image string, cacheEnabled bool, cachePVCName string) error {
 	setJobTimeout(job, project)
 	if cacheEnabled {
-		addCacheToJob(job, cachePVCName)
+		addCacheToJob(job, cachePVCName, project.Spec.Cache != nil && project.Spec.Cache.Modules)
 	}
 	addEnvToJob(job, project)
 	addExtraVolumesToJob(job, project)
@@ -1274,7 +1274,7 @@ func (r *TofuProjectReconciler) buildAndCreateDestroyJob(ctx context.Context, pr
 		if err != nil {
 			return err
 		}
-		addCacheToJob(newJob, pvcName)
+		addCacheToJob(newJob, pvcName, project.Spec.Cache != nil && project.Spec.Cache.Modules)
 	}
 	addEnvToJob(newJob, project)
 	addExtraVolumesToJob(newJob, project)

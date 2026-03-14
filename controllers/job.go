@@ -494,7 +494,8 @@ func setJobTimeout(job *batchv1.Job, project *tofuv1alpha1.TofuProject) {
 }
 
 // addCacheToJob injects the cache PVC volume, mount, and env var into a Job.
-func addCacheToJob(job *batchv1.Job, pvcName string) {
+// When moduleCache is true, an additional subPath mount is added for module caching.
+func addCacheToJob(job *batchv1.Job, pvcName string, moduleCache bool) {
 	job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
 		Name: "plugin-cache",
 		VolumeSource: corev1.VolumeSource{
@@ -508,6 +509,7 @@ func addCacheToJob(job *batchv1.Job, pvcName string) {
 		corev1.VolumeMount{
 			Name:      "plugin-cache",
 			MountPath: "/plugin-cache",
+			SubPath:   "providers",
 		},
 	)
 	job.Spec.Template.Spec.Containers[0].Env = append(
@@ -517,6 +519,16 @@ func addCacheToJob(job *batchv1.Job, pvcName string) {
 			Value: "/plugin-cache",
 		},
 	)
+	if moduleCache {
+		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+			job.Spec.Template.Spec.Containers[0].VolumeMounts,
+			corev1.VolumeMount{
+				Name:      "plugin-cache",
+				MountPath: "/work/.terraform/modules",
+				SubPath:   "modules",
+			},
+		)
+	}
 }
 
 // addEnvToJob injects user-specified env vars and envFrom into the first container of a Job.

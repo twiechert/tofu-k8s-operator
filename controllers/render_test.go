@@ -457,7 +457,7 @@ func TestAddCacheToJob(t *testing.T) {
 		},
 	}
 	job := buildJob(project, "myproj-apply-abc12345", "myproj-tf", "opentofu:latest", program, "tofu-runner")
-	addCacheToJob(job, "tofu-plugin-cache")
+	addCacheToJob(job, "tofu-plugin-cache", false)
 
 	// Check volume
 	foundVolume := false

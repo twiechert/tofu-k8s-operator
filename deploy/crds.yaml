@@ -205,6 +205,7 @@ spec:
                       description: "'shared' or 'dedicated'"
                     size: {type: string}
                     storageClass: {type: string}
+                    modules: {type: boolean}
                 env:
                   type: array
                   description: "Extra environment variables injected into tofu Job containers"

@@ -75,6 +75,9 @@ type CacheSpec struct {
 	Mode         string `json:"mode,omitempty"`
 	Size         string `json:"size,omitempty"` // default "1Gi"
 	StorageClass string `json:"storageClass,omitempty"`
+	// modules enables caching of downloaded Terraform/OpenTofu modules across jobs.
+	// Uses the same PVC as provider caching. Default: false.
+	Modules bool `json:"modules,omitempty"`
 }
 
 type ServiceAccountSpec struct {

@@ -277,7 +277,7 @@ func (r *TofuProjectReconciler) createPinnedApplyJob(ctx context.Context, projec
 	projectCopy.Spec.AutoApprove = true
 	newJob := buildJob(projectCopy, jobName, cmName, image, dummyProgram, saName)
 	if cacheMode != "" {
-		addCacheToJob(newJob, cachePVCName)
+		addCacheToJob(newJob, cachePVCName, project.Spec.Cache != nil && project.Spec.Cache.Modules)
 	}
 	addEnvToJob(newJob, project)
 	addExtraVolumesToJob(newJob, project)

@@ -14,3 +14,25 @@ serviceMonitor:
   interval: "30s"
   labels: {}
   namespace: ""
+
+prometheusRule:
+  enabled: false
+  labels: {}
+  namespace: ""
+  groups:
+    health:
+      enabled: true
+      errorFor: "5m"
+    drift:
+      enabled: true
+      detectedFor: "5m"
+    blastRadius:
+      enabled: true
+      threshold: 10
+    reconcile:
+      enabled: true
+      errorFor: "15m"
+      applyFailureThreshold: 2
+    approval:
+      enabled: true
+      waitingFor: "24h"

@@ -77,7 +77,7 @@ func (r *TofuProjectReconciler) reconcileDriftDetection(ctx context.Context, pro
 	newJob := buildPlanJob(*project, driftJobName, cmName, image, program, saName)
 	newJob.Labels["tofu.example.com/job-type"] = "drift"
 	if cacheEnabled {
-		addCacheToJob(newJob, cachePVCName)
+		addCacheToJob(newJob, cachePVCName, project.Spec.Cache != nil && project.Spec.Cache.Modules)
 	}
 	addEnvToJob(newJob, project)
 	addExtraVolumesToJob(newJob, project)

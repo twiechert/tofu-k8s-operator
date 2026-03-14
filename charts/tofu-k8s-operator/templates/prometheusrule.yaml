@@ -1,0 +1,102 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tofu-k8s-operator
+  {{- if .Values.prometheusRule.namespace }}
+  namespace: {{ .Values.prometheusRule.namespace }}
+  {{- else }}
+  namespace: {{ .Release.Namespace }}
+  {{- end }}
+  labels:
+    app: tofu-k8s-operator
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    {{- if .Values.prometheusRule.groups.health.enabled }}
+    - name: tofu-operator-health
+      rules:
+        - alert: TofuProjectError
+          expr: tofu_project_phase{phase="Error"} == 1
+          for: {{ .Values.prometheusRule.groups.health.errorFor | default "5m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "TofuProject {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} is in Error phase"
+            description: "The project has been in Error state for more than {{ .Values.prometheusRule.groups.health.errorFor | default "5m" }}."
+        - alert: TofuProjectDestroyFailed
+          expr: tofu_project_phase{phase="DestroyFailed"} == 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "TofuProject {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} destroy failed"
+            description: "A destroy operation has failed. Manual intervention may be required."
+        - alert: TofuProjectStateLocked
+          expr: tofu_project_phase{phase="Error"} == 1 and on(namespace, name) tofu_project_info == 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TofuProject {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} may have locked state"
+            description: "The project has been in Error state for over 10 minutes, which may indicate a state lock issue."
+    {{- end }}
+    {{- if .Values.prometheusRule.groups.drift.enabled }}
+    - name: tofu-operator-drift
+      rules:
+        - alert: TofuDriftDetected
+          expr: tofu_project_drift_detected == 1
+          for: {{ .Values.prometheusRule.groups.drift.detectedFor | default "5m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Drift detected in TofuProject {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }}"
+            description: "Infrastructure drift has been detected. Review the plan output and apply if needed."
+    {{- end }}
+    {{- if .Values.prometheusRule.groups.blastRadius.enabled }}
+    - name: tofu-operator-blast-radius
+      rules:
+        - alert: TofuHighBlastRadius
+          expr: tofu_project_blast_radius > {{ .Values.prometheusRule.groups.blastRadius.threshold | default 10 }}
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High blast radius in TofuProject {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }}"
+            description: "The last plan affects {{ "{{" }} $value {{ "}}" }} resources, which exceeds the threshold of {{ .Values.prometheusRule.groups.blastRadius.threshold | default 10 }}."
+    {{- end }}
+    {{- if .Values.prometheusRule.groups.reconcile.enabled }}
+    - name: tofu-operator-reconcile
+      rules:
+        - alert: TofuReconcileErrors
+          expr: rate(tofu_project_reconcile_total{result="error"}[10m]) > 0
+          for: {{ .Values.prometheusRule.groups.reconcile.errorFor | default "15m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "TofuProject {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} has reconcile errors"
+            description: "The project has been producing reconcile errors for over {{ .Values.prometheusRule.groups.reconcile.errorFor | default "15m" }}."
+        - alert: TofuApplyFailures
+          expr: increase(tofu_project_apply_total{result="failed"}[1h]) > {{ .Values.prometheusRule.groups.reconcile.applyFailureThreshold | default 2 }}
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "TofuProject {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} has repeated apply failures"
+            description: "The project has had more than {{ .Values.prometheusRule.groups.reconcile.applyFailureThreshold | default 2 }} failed applies in the last hour."
+    {{- end }}
+    {{- if .Values.prometheusRule.groups.approval.enabled }}
+    - name: tofu-operator-approval
+      rules:
+        - alert: TofuPlanWaitingApproval
+          expr: tofu_project_phase{phase="WaitingApproval"} == 1
+          for: {{ .Values.prometheusRule.groups.approval.waitingFor | default "24h" }}
+          labels:
+            severity: info
+          annotations:
+            summary: "TofuProject {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} waiting for approval"
+            description: "A plan has been waiting for approval for over {{ .Values.prometheusRule.groups.approval.waitingFor | default "24h" }}."
+    {{- end }}
+{{- end }}
