@@ -338,26 +338,32 @@ func (r *TofuProjectReconciler) createApprovalPR(ctx context.Context, project *t
 	}
 
 	ghSpec := project.Spec.Approval.GitHub
+	diffPath := ghSpec.DiffPath
+	if diffPath == "" {
+		diffPath = "plans/"
+	}
+	if !strings.HasSuffix(diffPath, "/") {
+		diffPath += "/"
+	}
+	// Always commit a plan file so the branch has at least one commit for the PR.
+	// When commitDiff is true, commit the full redacted plan; otherwise commit just the summary.
+	var planContent, fileExt string
 	if ghSpec.CommitDiff {
-		diffPath := ghSpec.DiffPath
-		if diffPath == "" {
-			diffPath = "plans/"
-		}
-		if !strings.HasSuffix(diffPath, "/") {
-			diffPath += "/"
-		}
-		// Commit the JSON plan file with sensitive values redacted; fall back to text output
-		planContent := planOutput
-		fileExt := "txt"
+		fileExt = "txt"
+		planContent = planOutput
 		if planJSON != "" {
 			planContent = redactSensitivePlanJSON(planJSON)
 			fileExt = "json"
 		}
-		filePath := fmt.Sprintf("%s%s/%s/%s.%s", diffPath, project.Namespace, project.Name, appliedHash[:8], fileExt)
-		commitMsg := fmt.Sprintf("chore: add tofu plan for %s/%s (%s)", project.Namespace, project.Name, appliedHash[:8])
-		if err := ghClient.CreateOrUpdateFile(ctx, filePath, planContent, commitMsg, branch); err != nil {
-			log.Error(err, "failed to commit plan file (non-fatal)")
-		}
+	} else {
+		fileExt = "txt"
+		planContent = fmt.Sprintf("Plan for %s/%s\nHash: %s\nSummary: %s\n",
+			project.Namespace, project.Name, appliedHash[:8], project.Status.PlanSummary)
+	}
+	filePath := fmt.Sprintf("%s%s/%s/%s.%s", diffPath, project.Namespace, project.Name, appliedHash[:8], fileExt)
+	commitMsg := fmt.Sprintf("chore: add tofu plan for %s/%s (%s)", project.Namespace, project.Name, appliedHash[:8])
+	if err := ghClient.CreateOrUpdateFile(ctx, filePath, planContent, commitMsg, branch); err != nil {
+		log.Error(err, "failed to commit plan file (non-fatal)")
 	}
 
 	// Build PR body
