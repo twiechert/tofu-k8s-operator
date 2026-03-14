@@ -120,6 +120,7 @@ func (c *GitHubClient) GetBranchSHA(ctx context.Context, branch string) (string,
 }
 
 // CreateBranch creates a new branch from the given SHA.
+// If the branch already exists, it is updated to point to fromSHA.
 func (c *GitHubClient) CreateBranch(ctx context.Context, branchName, fromSHA string) error {
 	payload := map[string]string{
 		"ref": "refs/heads/" + branchName,
@@ -129,20 +130,48 @@ func (c *GitHubClient) CreateBranch(ctx context.Context, branchName, fromSHA str
 	if err != nil {
 		return err
 	}
-	if status != 201 {
-		return fmt.Errorf("create branch returned %d: %s", status, body)
+	if status == 201 {
+		return nil
 	}
-	return nil
+	// Branch already exists — update it instead
+	if status == 422 {
+		updatePayload := map[string]interface{}{
+			"sha":   fromSHA,
+			"force": true,
+		}
+		body, status, err = c.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/%s/git/refs/heads/%s", c.Owner, c.Repo, branchName), updatePayload)
+		if err != nil {
+			return err
+		}
+		if status != 200 {
+			return fmt.Errorf("update branch returned %d: %s", status, body)
+		}
+		return nil
+	}
+	return fmt.Errorf("create branch returned %d: %s", status, body)
 }
 
 // CreateOrUpdateFile creates or updates a file on the given branch.
+// If the file already exists, its SHA is fetched first (required by the GitHub API for updates).
 func (c *GitHubClient) CreateOrUpdateFile(ctx context.Context, path, content, message, branch string) error {
 	encoded := base64.StdEncoding.EncodeToString([]byte(content))
-	payload := map[string]string{
+	payload := map[string]interface{}{
 		"message": message,
 		"content": encoded,
 		"branch":  branch,
 	}
+
+	// Check if the file already exists on the branch to get its SHA
+	existingBody, existingStatus, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/%s/contents/%s?ref=%s", c.Owner, c.Repo, path, branch), nil)
+	if err == nil && existingStatus == 200 {
+		var existing struct {
+			SHA string `json:"sha"`
+		}
+		if json.Unmarshal(existingBody, &existing) == nil && existing.SHA != "" {
+			payload["sha"] = existing.SHA
+		}
+	}
+
 	body, status, err := c.do(ctx, http.MethodPut, fmt.Sprintf("/repos/%s/%s/contents/%s", c.Owner, c.Repo, path), payload)
 	if err != nil {
 		return err
