@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/twiechert/tofu-k8s-operator
-  tag: latest
+  tag: ""
   pullPolicy: IfNotPresent
 
 replicaCount: 1

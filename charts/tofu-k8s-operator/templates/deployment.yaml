@@ -16,7 +16,7 @@ spec:
       serviceAccountName: tofu-k8s-operator
       containers:
         - name: manager
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - --metrics-bind-address={{ .Values.metricsBindAddress }}
