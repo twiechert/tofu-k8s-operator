@@ -223,6 +223,10 @@ spec:
 | [TTL Auto-Deletion](doc/ttl.md) | Automatically delete projects after a configured duration |
 | [Examples](doc/examples.md) | AWS S3 bucket example and more |
 
+## Web Console
+
+[tofu-k8s-console](https://github.com/twiechert/tofu-k8s-console) — a web UI for managing projects, viewing plan output, approving plans, inspecting resources, and visualizing your infrastructure stack.
+
 ## Build & Test
 
 ```bash
